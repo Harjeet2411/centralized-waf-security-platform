@@ -22,6 +22,7 @@ from app.models import (
     WebAcl,
 )
 from app.schemas import contract as c
+from app.services.approval_service import approval_out
 
 ENTITY_LIMIT = 500  # highest-risk entities only; full list is paginated via /api/v1/entities (M3)
 FEED_LIMIT = 200
@@ -267,30 +268,10 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
         for dr in (await db.scalars(select(DriftEvent).order_by(DriftEvent.detected_at.desc()).limit(FEED_LIMIT))).all()
     ]
 
-    approvals_out = []
     pending_first = case((Approval.status == "PENDING", 0), else_=1)
-    for ap in (await db.scalars(
+    approvals_out = [approval_out(ap) for ap in (await db.scalars(
         select(Approval).order_by(pending_first, Approval.requested_at.desc()).limit(FEED_LIMIT)
-    )).all():
-        summary = ap.simulation_summary or {}
-        status = "failed" if ap.verification_status == "FAILED" else c.APPROVAL_STATUS[ap.status]
-        stage = "guardrails" if ap.allow_list_check == "BLOCKED_PROTECTED_ENTITY" else c.LIFECYCLE_STAGE[ap.status]
-        approvals_out.append(c.ApprovalOut(
-            id=str(ap.id), action_type=ap.action_type, target=ap.target, reason=ap.reason, status=status,
-            requested_by=ap.requested_by, requested_at=c.iso(ap.requested_at), approver=ap.approved_by,
-            approved_at=c.iso(ap.approved_at) or None, simulation_result=summary.get("summary"),
-            impact=c.ApprovalImpactOut(
-                affected_accounts=int(summary.get("affected_accounts", 0)),
-                affected_webacls=int(summary.get("affected_webacls", 0)),
-                affected_apps=int(summary.get("affected_apps", 0)),
-                potential_fp=int(summary.get("potential_false_positives", 0)),
-                security_gain=str(summary.get("risk_reduction", "")), fp_risk=str(summary.get("legitimate_impact", "")),
-            ),
-            lifecycle_stage=stage, approval_code=ap.approval_code, status_detail=ap.status, risk_level=ap.risk_level,
-            allow_list_check=ap.allow_list_check, verification_status=ap.verification_status,
-            aws_request_id=ap.aws_request_id, required_approver_role=ap.required_approver_role,
-            expires_at=c.iso(ap.expires_at) or None,
-        ))
+    )).all()]
 
     return c.BootstrapOut(
         accounts=accounts_out, endpoints=endpoints_out, webacls=webacls_out, rules=dict(rules_out),

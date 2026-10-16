@@ -203,10 +203,22 @@ The existing frontend types are the wire contract. Facts about them that overrid
 | TRD puts the throttling `Retry` on the Map state | On the per-account task (a Map retry re-runs every account). |
 | TRD: ResponseRole trust requires `aws:MultiFactorAuthPresent` | Impossible through a service-role chain. Trust instead requires the response ExternalId + session tag `sas:approval-id=APR-*` + `sts:SourceIdentity` = approver email (lands in CloudTrail). Human MFA is enforced at platform login. Verify on the pilot account. |
 | ResponseRole action list | Adds `elasticloadbalancing:SetWebACL` + `apigateway:SetWebACL` (required by `AssociateWebACL`). CloudFront attach needs `cloudfront:UpdateDistribution`, which is explicitly **denied** (too broad) — CloudFront attachments stay manual. |
+| `approvals.allow_list_check VARCHAR(16)` in BACKEND_SCHEMA.md | Widened to 32 in migration 0003 (its own CHECK value `BLOCKED_PROTECTED_ENTITY` is 24 chars). |
+| `ttl_expiry_worker` Lambda | Backend module `app/workers/ttl_expiry.py` (`python -m app.workers.ttl_expiry`) — it must reuse the approval executor and audit path. |
+| SIMULATE for every change | Mandatory for TEMP/PERM block, MODIFY_RULE, MODIFY_RATE_LIMIT, ADD_EXCEPTION. Optional (lifecycle shows `skipped`) for REMEDIATE_DRIFT (restores an approved baseline), ATTACH_WAF and REMOVE_BLOCK (no traffic to replay). |
 
 Interface VPC endpoints are regional: WAFv2/CloudWatch calls to regions other than the central one go via NAT. CloudFront-scope WAFv2 calls always target `us-east-1`.
 
 ---
+
+### Controlled response facts (Milestone 4)
+- **Code:** `app/services/approval_service.py` (policy + lifecycle), `aws_executor.py` (AWS calls), `guardrail_service.py`, `simulator_service.py`, `audit_service.py`; routes in `app/api/v1/response.py`.
+- **IP blocks** go into a platform-owned IP set referenced by a WebACL rule named `SAS-Platform-Block*` (an `IP_SET` BLOCK rule). A WebACL without it returns 409 — provisioning that rule is a platform-team prerequisite per WebACL.
+- **Block-target rails:** IP/CIDR only, no broader than /24 (v4) or /64 (v6), public ranges only. Allow-list checks happen at request time, again at approval time, and in the `trg_approvals_allow_list` DB trigger.
+- **Tiered approval** (`approval_service.policy`): TEMP block ≤1h → Analyst or Admin; longer/permanent/remove → Admin; rule/rate/exception/drift → Admin + scoped Application Owner; ATTACH_WAF → Admin + (App Owner or AWS Administrator). Requesters can't approve, one person fills one slot, approvers need an MFA session.
+- **Execution** runs inline on the final approval (boto3 in a thread). Verified WebACL changes move `baseline_config` so drift doesn't re-flag approved changes. Rollback applies the inverse of our own change (removes only the IPs we added, restores only the rule we touched) and refuses non-reversible changes (`changes.rollback_available = false`, e.g. enabling logging).
+- **Executor tests** use `tests/fake_waf.py` (stateful, rotating LockTokens) via the `get_executor_factory` dependency override; `botocore.stub.Stubber` pins real UpdateWebACL/UpdateIPSet request shapes.
+- **Audit rows** use `clock_timestamp()` so several rows written in one transaction keep their order. Only the test harness may suspend the audit triggers (cleanup in `tests/conftest.py`).
 
 ## 10. RBAC (8 roles, 9 permissions)
 

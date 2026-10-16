@@ -28,6 +28,13 @@ class Settings(BaseSettings):
 
     refresh_freshness_seconds: int = 3_600  # /api/v1/refresh: data younger than this is "ready"
 
+    # Controlled response (Milestone 4)
+    aws_region: str = "us-east-1"
+    response_external_id: SecretStr = SecretStr("")  # sts:ExternalId of SASWafResponseRole (Secrets Manager)
+    sns_topic_arn: str = ""  # approval notifications; empty = disabled
+    verify_wait_seconds: float = 2.0  # Rule #7: pause before re-reading AWS state
+    ttl_expiring_window_minutes: int = 15
+
     @model_validator(mode="after")
     def _guard_insecure_settings(self) -> "Settings":
         deployed = self.environment in ("staging", "production")

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, CIDR, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -73,7 +73,7 @@ class Approval(Base):
     risk_level: Mapped[str] = mapped_column(String(16))
     ttl_hours: Mapped[int | None] = mapped_column(Integer)
     expires_at: Mapped[datetime | None] = mapped_column(TZ)
-    allow_list_check: Mapped[str] = mapped_column(String(16))
+    allow_list_check: Mapped[str] = mapped_column(String(32))
     simulation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("simulations.id"))
     simulation_summary: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     impact_scope: Mapped[str] = mapped_column(Text)
@@ -106,6 +106,21 @@ class Change(Base):
     executed_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
     rolled_back_at: Mapped[datetime | None] = mapped_column(TZ)
     rolled_back_by: Mapped[str | None] = mapped_column(String(255))
+    rollback_available: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+
+
+class ApprovalDecision(Base):
+    __tablename__ = "approval_decisions"
+    __table_args__ = (UniqueConstraint("approval_id", "decided_by", name="uq_approval_decisions_person"),)
+
+    id: Mapped[uuid.UUID] = pk()
+    approval_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("approvals.id", ondelete="RESTRICT"))
+    slot: Mapped[int] = mapped_column(Integer)
+    decided_by: Mapped[str] = mapped_column(String(255))
+    decided_by_role: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    comment: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
 
 
 class AuditEvent(Base):

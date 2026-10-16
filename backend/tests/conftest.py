@@ -37,9 +37,10 @@ from app.main import app  # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-# Everything except roles (seeded by the migration) and audit_events (immutable by design), child-first.
+# Everything except roles (seeded by the migration), child-first. audit_events is handled separately.
 CLEANUP_ORDER = [
-    "platform_health", "drift_events", "changes", "threat_intelligence", "detections", "entity_relationships",
+    "engine_state", "approval_decisions", "platform_health", "drift_events", "changes", "threat_intelligence",
+    "detections", "entity_relationships",
     "waf_events", "managed_rule_versions", "rules", "endpoints", "approvals", "simulations", "campaigns",
     "entities", "allow_list_entries", "web_acls", "applications", "users",
 ]
@@ -58,8 +59,11 @@ def migrated_database():
 async def clean_state():
     yield
     async with SessionLocal() as session:
-        # audit_events rows referencing approvals would block approval cleanup; tests that write audit
-        # rows don't reference approvals.
+        # Test-only: audit rows reference approvals/accounts and are immutable by design, so the harness
+        # suspends the immutability triggers just for its own cleanup.
+        await session.execute(text("ALTER TABLE audit_events DISABLE TRIGGER USER"))
+        await session.execute(text("DELETE FROM audit_events"))
+        await session.execute(text("ALTER TABLE audit_events ENABLE TRIGGER USER"))
         for table in CLEANUP_ORDER:
             await session.execute(text(f"DELETE FROM {table}"))  # noqa: S608 - fixed table list
         await session.execute(text("DELETE FROM accounts"))
@@ -94,9 +98,15 @@ async def create_user(role: str, *, active: bool = True, scoped: list[str] | Non
     return {"id": user.id, "sub": user.sso_subject_id}
 
 
-async def login_as(role: str, **kwargs) -> dict[str, str]:
+async def login_as(role: str, *, mfa: bool = True, **kwargs) -> dict[str, str]:
     """Create a user + server-side session directly in Redis; returns the cookie dict for httpx."""
     user = await create_user(role, **kwargs)
     session_id = secrets.token_urlsafe(16)
-    await redis_client.set(f"session:user:{session_id}", json.dumps({"user_id": str(user["id"]), "mfa": True}))
+    await redis_client.set(f"session:user:{session_id}", json.dumps({"user_id": str(user["id"]), "mfa": mfa}))
     return {"sas_session": session_id}
+
+
+async def user_email(cookies: dict[str, str]) -> str:
+    raw = json.loads(await redis_client.get(f"session:user:{cookies['sas_session']}"))
+    async with SessionLocal() as session:
+        return await session.scalar(text("SELECT email FROM users WHERE id = :id"), {"id": raw["user_id"]})

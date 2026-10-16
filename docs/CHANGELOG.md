@@ -5,6 +5,20 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Milestone 4: Simulation, Guardrails, Controlled Response & Audit
+### Added
+- Migration `0003`: `approval_decisions` (multi-person approvals), `changes.rollback_available`, and the `trg_approvals_allow_list` trigger that refuses any IP-block approval overlapping an active allow-list CIDR (checks `target` and every `proposed_state.add` entry).
+- Guardrails: server-side allow-list check (GiST `&&`) at request and approval time; block-target rails (/24 v4, /64 v6, public ranges only); denials audited as `GUARDRAIL_DENIED`.
+- Rule Impact Simulator (`POST /api/v1/simulations`): BLOCK_IPS, BLOCK_JA4, RULE_ACTION, RATE_LIMIT over historical `waf_events` with would-block / false-positive / allow-list results and visibility caveats; False Positive Analyzer (`GET /api/v1/simulations/false-positives`).
+- Controlled Response Engine: `POST /api/v1/approvals`, `GET /api/v1/approvals[/{id}]` (with the 12-step lifecycle state), `POST /api/v1/approvals/{id}/decide`. Tiered policies, no self-approval, one slot per person, MFA sessions, SNS notifications (best effort).
+- AWS executor via `SASWafResponseRole` (approval code session tag + approver SourceIdentity): IP set add/remove, rule action, rate limit, managed-rule exception, restore removed rule, enable logging, associate WebACL. Every write uses the LockToken, captures the AWS RequestId, waits, re-reads and verifies; unverified changes are never reported as success.
+- Rollback (`POST /api/v1/changes/{id}/rollback`) by inverse operation; TTL auto-expiry worker (`python -m app.workers.ttl_expiry`) with EXPIRING/REMOVED states; verified WebACL changes move the drift baseline.
+- Allow-list management (`/api/v1/allow-list`, deactivation Security Admin only), active blocks, change list, and audit export (`GET /api/v1/governance/audit?format=csv|json`).
+- 27 new backend tests (lifecycle end-to-end on a stateful fake WAFv2, botocore Stubber request-shape pins, DB trigger bypass attempts, RBAC/scope/MFA denials).
+### Fixed
+- `approvals.allow_list_check` widened to VARCHAR(32): the spec's VARCHAR(16) could never store `BLOCKED_PROTECTED_ENTITY`.
+- Audit rows written in the same transaction now keep their order (`clock_timestamp()`).
+
 ## [Unreleased] - Milestone 3: Detection, Correlation, Drift, Scoring & Threat Intel
 ### Added
 - Migration `0002`: `web_acls.current_config`, `accounts.score_evidence`, `waf_events.ingested_at`, `detections.fingerprint`, `engine_state` (per-engine watermarks).
