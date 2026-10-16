@@ -24,7 +24,11 @@ def test_full_sync_writes_inventory_events_and_health(account):
     assert acls["prod-payments-waf"]["visibility_level"] == "full"
     assert acls["prod-payments-waf"]["logging_destination"] == "arn:aws:s3:::aws-waf-logs-sas-123456789012"
     assert acls["cdn-waf"]["visibility_level"] == "sampled" and acls["cdn-waf"]["scope"] == "CLOUDFRONT"
-    assert acls["prod-payments-waf"]["baseline_config"]["ARN"] == REGIONAL_ARN  # first-seen baseline
+    baseline = acls["prod-payments-waf"]["baseline_config"]
+    assert baseline["ARN"] == REGIONAL_ARN and baseline == acls["prod-payments-waf"]["current_config"]
+    assert baseline["_associated_resources"] == sorted([
+        "arn:alb/alb-public", "arn:aws:apigateway:eu-west-1::/restapis/abc123/stages/prod"])
+    assert baseline["_logging_destination"] == "arn:aws:s3:::aws-waf-logs-sas-123456789012"
     assert acls["prod-payments-waf"]["requests_24h"] == 1350 and acls["prod-payments-waf"]["blocked_24h"] == 300
 
     rules = {r["name"]: r for r in query("SELECT * FROM rules")}
@@ -93,6 +97,7 @@ def test_telemetry_mode_skips_discovery(account):
     assert services == {"wafv2", "cloudwatch"}
     assert query("SELECT * FROM endpoints") == []
     assert query("SELECT last_discovered FROM accounts")[0]["last_discovered"] is None
+    assert {r["baseline_config"] == {} and r["current_config"] == {} for r in query("SELECT * FROM web_acls")} == {True}
 
 
 def test_removed_endpoint_is_deleted_but_failed_region_keeps_inventory(account):

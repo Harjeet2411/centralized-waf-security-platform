@@ -13,6 +13,7 @@ from app.models.inventory import (  # noqa: E402
     Account,
     Application,
     Endpoint,
+    EngineState,
     ManagedRuleVersion,
     PlatformHealth,
     Role,
@@ -38,7 +39,7 @@ from app.models.telemetry import (  # noqa: E402
 )
 
 __all__ = [
-    "Base", "Account", "Application", "Endpoint", "ManagedRuleVersion", "PlatformHealth", "Role", "Rule",
+    "Base", "Account", "Application", "Endpoint", "EngineState", "ManagedRuleVersion", "PlatformHealth", "Role", "Rule",
     "User", "WebAcl", "AllowListEntry", "Approval", "AuditEvent", "Change", "DriftEvent", "Simulation",
     "Campaign", "Detection", "Entity", "EntityRelationship", "ThreatIntelligence", "WafEvent",
 ]

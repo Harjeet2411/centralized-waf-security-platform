@@ -341,3 +341,60 @@ class PrincipalOut(Contract):
     permissions: list[str]
     scoped_account_ids: list[str]
     mfa: bool
+
+
+# --- Milestone 3 investigation views -------------------------------------------------------------------
+
+class WebACLDetailOut(WebACLOut):
+    rules: list[WafRuleOut]
+
+
+class Page(Contract):
+    items: list
+    total: int
+    limit: int
+    offset: int
+
+
+class GraphNode(Contract):
+    id: str
+    type: str  # ip | ja4 | ja3 | asn | ua | webacl | campaign
+    label: str
+    risk_level: str | None = None
+
+
+class GraphEdge(Contract):
+    source: str
+    target: str
+    type: str  # USES_JA4 | BELONGS_TO_ASN | ... | BLOCKED | ALLOWED | MALICIOUS_ALLOWED | CAMPAIGN_MEMBER
+    count: int
+
+
+class AllowedExplanation(Contract):
+    """"Why was it allowed?" evidence per WebACL that let this entity through."""
+
+    webacl_id: str
+    webacl_name: str
+    allowed_requests: int
+    default_action: str
+    matched_rules: list[str]
+    count_mode_rules: list[str]
+    open_drift: list[dict]
+
+
+class EntityDetailOut(Contract):
+    entity: EntityOut
+    graph: dict  # {"nodes": [GraphNode], "edges": [GraphEdge]}
+    timeline: list[dict]  # [{"bucket": iso hour, "BLOCK": n, "ALLOW": n, "COUNT": n}]
+    recent_events: list[dict]
+    allowed_explanations: list[AllowedExplanation]
+    visibility: dict[str, int]  # events by source (FULL_LOG / SAMPLED) behind this profile
+    recommended_action: str | None
+
+
+class CampaignDetailOut(Contract):
+    campaign: CampaignOut
+    correlation_evidence: list[dict]
+    members: list[EntityOut]
+    targeted_uris: list[str]
+    techniques: list[str]

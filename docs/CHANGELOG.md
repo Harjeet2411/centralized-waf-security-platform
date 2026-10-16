@@ -5,6 +5,18 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Milestone 3: Detection, Correlation, Drift, Scoring & Threat Intel
+### Added
+- Migration `0002`: `web_acls.current_config`, `accounts.score_evidence`, `waf_events.ingested_at`, `detections.fingerprint`, `engine_state` (per-engine watermarks).
+- `lambdas/common/scoring.py`: the 7-dimension WAF Security Score and entity T/C/B/R models as pure, unit-tested functions.
+- `drift_scoring_engine`: baseline-vs-current WebACL diff (BLOCK->COUNT downgrades, removed rules, default action, logging disabled, association removed, outdated/deprecated managed versions); idempotent drift codes with resolve/re-open; per-WebACL and per-account scores with per-dimension evidence and honest confidence (FULL / PARTIAL / SAMPLED / NONE).
+- `detection_campaign_engine`: watermark-based entity folding (IP, JA4, JA3, ASN, User-Agent) and relationships; entity scoring with TI, JA4 malice, campaign membership, business impact and allow-list awareness; JA4 campaigns with evidence-based attack stories; SCANNER, CREDENTIAL_ATTACK, DISTRIBUTED_ATTACK, SLOW_DISTRIBUTED, MALICIOUS_ALLOWED and JA4_CORRELATION detections (deduplicated by fingerprint); event classification.
+- `ti_enrichment_worker`: AbuseIPDB / GreyNoise / VirusTotal with Redis 24h cache, per-provider daily budgets, private/allow-listed IPs never sent out, graceful degradation reported in platform health.
+- Step Functions post-sync engines now run in order TI -> detection -> drift/scoring, each failure-isolated.
+- API: `GET /api/v1/webacls`, `/endpoints`, `/entities` (filter + paginate), `/entities/{id}` (graph, timeline, recent events, "why was it allowed?"), `/campaigns`, `/campaigns/{id}`; bootstrap `posture_dimensions` from account score evidence.
+### Fixed
+- Engine watermarks use the DB clock with a configurable lag (`SAS_WATERMARK_LAG_SECONDS`, default 120s) so host/DB clock skew and in-flight ingest transactions can't drop events.
+
 ## [Unreleased] - Milestone 2: Cross-Account Serverless Data Pipeline
 ### Added
 - `infra/stacksets/cross-account-waf-roles.yaml` (cfn-lint clean): read-only `SASWafDiscoveryRole` (ExternalId trust) and `SASWafResponseRole` (ExternalId + `sas:approval-id` session tag + approver `SourceIdentity`; explicit deny on WAF deletes, `iam:*`, `organizations:*`, `s3:Delete*`, role chaining, `cloudfront:UpdateDistribution`).

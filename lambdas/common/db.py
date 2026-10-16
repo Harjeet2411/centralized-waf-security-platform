@@ -72,3 +72,27 @@ def upsert_health(cur: psycopg.Cursor, *, component: str, account_id: str | None
         {"component": component, "account_id": account_id, "status": status, "detail": detail, "error": error,
          "modules": affected_modules or [], "success": success},
     )
+
+
+def db_now(cur: psycopg.Cursor):
+    """Watermark upper bound, from the DB clock (waf_events.ingested_at is stamped by the DB; host/DB skew would
+    drop fresh events) and lagged: a writer whose transaction began before ours but commits after it stamps an
+    ingested_at we could already have passed. SAS_WATERMARK_LAG_SECONDS must exceed the longest ingest
+    transaction (collector/ingestor transactions are per-WebACL / per-500-row batch)."""
+    lag = int(os.environ.get("SAS_WATERMARK_LAG_SECONDS", "120"))
+    cur.execute("SELECT now() - make_interval(secs => %s) AS now", (lag,))
+    return cur.fetchone()["now"]
+
+
+def get_watermark(cur: psycopg.Cursor, engine: str):
+    """Ingestion watermark for an engine (epoch on first run)."""
+    cur.execute("INSERT INTO engine_state (engine) VALUES (%s) ON CONFLICT DO NOTHING", (engine,))
+    cur.execute("SELECT watermark FROM engine_state WHERE engine = %s FOR UPDATE", (engine,))
+    return cur.fetchone()["watermark"]
+
+
+def set_watermark(cur: psycopg.Cursor, engine: str, watermark, detail: dict) -> None:
+    cur.execute(
+        "UPDATE engine_state SET watermark = %s, last_run_at = now(), detail = %s::jsonb WHERE engine = %s",
+        (watermark, json.dumps(detail, default=str), engine),
+    )

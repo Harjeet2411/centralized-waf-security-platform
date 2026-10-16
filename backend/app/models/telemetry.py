@@ -23,6 +23,7 @@ class WafEvent(Base):
             postgresql_where=text("action = 'ALLOW'"),
         ),
         Index("idx_waf_events_http_jsonb", "http_request", postgresql_using="gin"),
+        Index("idx_waf_events_ingested", "ingested_at"),
     )
 
     id: Mapped[uuid.UUID] = pk()
@@ -49,6 +50,7 @@ class WafEvent(Base):
     classification: Mapped[str] = mapped_column(String(16), server_default=text("'UNKNOWN'"))
     source: Mapped[str] = mapped_column(String(16))
     http_request: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    ingested_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
 
 
 class Entity(Base):
@@ -137,6 +139,7 @@ class Campaign(Base):
 
 class Detection(Base):
     __tablename__ = "detections"
+    __table_args__ = (Index("idx_detections_fingerprint", "fingerprint"),)
 
     id: Mapped[uuid.UUID] = pk()
     type: Mapped[str] = mapped_column(String(32))
@@ -154,6 +157,7 @@ class Detection(Base):
     evidence: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     recommended_action: Mapped[str] = mapped_column(Text)
     timestamp: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
 
 
 class ThreatIntelligence(Base):

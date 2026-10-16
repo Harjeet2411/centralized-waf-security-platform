@@ -8,16 +8,20 @@ from account_collector.collect import DiscoveredEndpoint, WebAclSnapshot, waf_st
 
 UPSERT_WEB_ACL = """
 INSERT INTO web_acls (webacl_id, arn, name, account_id, region, scope, default_action, capacity, logging_enabled,
-                      logging_destination, visibility_level, baseline_config, last_synced_at)
+                      logging_destination, visibility_level, baseline_config, current_config, last_synced_at)
 VALUES (%(id)s, %(arn)s, %(name)s, %(account_id)s, %(region)s, %(scope)s, %(default_action)s, %(capacity)s,
-        %(logging_enabled)s, %(logging_destination)s, %(visibility_level)s, %(raw)s::jsonb, now())
+        %(logging_enabled)s, %(logging_destination)s, %(visibility_level)s, %(config)s::jsonb, %(config)s::jsonb,
+        now())
 ON CONFLICT (arn) DO UPDATE SET
     name = EXCLUDED.name, default_action = EXCLUDED.default_action, capacity = EXCLUDED.capacity,
     logging_enabled = EXCLUDED.logging_enabled, logging_destination = EXCLUDED.logging_destination,
     visibility_level = EXCLUDED.visibility_level, last_synced_at = now(),
+    -- Config snapshots come from full syncs only ('{}' on telemetry runs leaves them untouched).
     -- First-seen configuration becomes the drift baseline; afterwards only an approved change may move it.
     baseline_config = CASE WHEN web_acls.baseline_config = '{}'::jsonb THEN EXCLUDED.baseline_config
-                           ELSE web_acls.baseline_config END
+                           ELSE web_acls.baseline_config END,
+    current_config = CASE WHEN EXCLUDED.current_config = '{}'::jsonb THEN web_acls.current_config
+                          ELSE EXCLUDED.current_config END
 RETURNING id
 """
 
@@ -51,12 +55,17 @@ ON CONFLICT (resource_arn) DO UPDATE SET
 """
 
 
-def save_web_acl(cur, account_id: str, snap: WebAclSnapshot) -> str:
+def config_document(snap: WebAclSnapshot, associated: list[str]) -> dict:
+    """Full WebACL JSON plus the two facts drift needs that GetWebACL doesn't return."""
+    return {**snap.raw, "_logging_destination": snap.logging_destination, "_associated_resources": sorted(associated)}
+
+
+def save_web_acl(cur, account_id: str, snap: WebAclSnapshot, config: dict | None = None) -> str:
     cur.execute(UPSERT_WEB_ACL, {
         "id": snap.id, "arn": snap.arn, "name": snap.name, "account_id": account_id, "region": snap.region,
         "scope": snap.scope, "default_action": snap.default_action, "capacity": snap.capacity,
         "logging_enabled": snap.logging_destination is not None, "logging_destination": snap.logging_destination,
-        "visibility_level": snap.visibility_level, "raw": json.dumps(snap.raw, default=str),
+        "visibility_level": snap.visibility_level, "config": json.dumps(config or {}, default=str),
     })
     return cur.fetchone()["id"]
 

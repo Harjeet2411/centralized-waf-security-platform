@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "boto3>=1.34",
     "psycopg[binary]>=3.2",
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -21,7 +22,8 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["common*", "account_collector*", "fetch_accounts*", "mark_account_degraded*", "s3_log_ingestor*"]
+include = ["common*", "account_collector*", "fetch_accounts*", "mark_account_degraded*", "s3_log_ingestor*",
+           "drift_scoring_engine*", "detection_campaign_engine*", "ti_enrichment_worker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

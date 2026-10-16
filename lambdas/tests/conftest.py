@@ -12,6 +12,7 @@ TEST_DB = os.environ.get("SAS_TEST_DB", "sas:sas_local_dev@localhost:5433/sas_wa
 os.environ.update({
     "SAS_LAMBDA_DATABASE_URL": f"postgresql://{TEST_DB}",
     "SAS_DISCOVERY_EXTERNAL_ID": "test-external-id",
+    "SAS_WATERMARK_LAG_SECONDS": "0",
     "AWS_DEFAULT_REGION": "us-east-1",
     "AWS_ACCESS_KEY_ID": "testing",
     "AWS_SECRET_ACCESS_KEY": "testing",

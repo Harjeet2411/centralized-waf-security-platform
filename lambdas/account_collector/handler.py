@@ -78,8 +78,13 @@ def collect_account(account: dict, mode: str, clients: ClientFactory, now: datet
     inserted = 0
     with db.transaction() as cur:
         webacl_db_ids = {}
+        associated: dict[str, list[str]] = {}
+        for ep in endpoints:
+            if ep.webacl_arn:
+                associated.setdefault(ep.webacl_arn, []).append(ep.resource_arn)
         for snap in snapshots.values():
-            webacl_db_ids[snap.arn] = store.save_web_acl(cur, account_id, snap)
+            config = store.config_document(snap, associated.get(snap.arn, [])) if full else None
+            webacl_db_ids[snap.arn] = store.save_web_acl(cur, account_id, snap, config)
             store.save_rules(cur, account_id, webacl_db_ids[snap.arn], snap)
             store.save_metric_totals(cur, webacl_db_ids[snap.arn], snap, totals)
         if full:

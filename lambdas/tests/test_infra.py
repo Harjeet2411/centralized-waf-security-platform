@@ -69,7 +69,7 @@ def test_asl_transitions_resolve():
         targets = [state.get("Next")] + [c["Next"] for c in state.get("Catch", [])]
         for target in filter(None, targets):
             assert target in scope, f"{name} -> {target} missing"
-        assert state.get("End") or state.get("Next"), name
+        assert state["Type"] in ("Succeed", "Fail") or state.get("End") or state.get("Next"), name
 
 
 def test_asl_fan_out_and_retry_placement():

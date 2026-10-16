@@ -1,5 +1,5 @@
 {
-  "Comment": "SAS 39-account parallel WAF discovery & telemetry sync. Input: {\"mode\": \"full\" | \"telemetry\"}. ${...} values are DefinitionSubstitutions. Retries sit on the per-account task (not the Map) so one throttled account never re-runs the other 38.",
+  "Comment": "SAS 39-account parallel WAF discovery & telemetry sync. Input: {\"mode\": \"full\" | \"telemetry\"}. ${...} values are DefinitionSubstitutions. Retries sit on the per-account task (not the Map) so one throttled account never re-runs the other 38. Post-sync engines run in order TI -> detection -> drift/scoring (each consumes the previous one's output); a failing engine never blocks the next.",
   "StartAt": "FetchActiveAccounts",
   "States": {
     "FetchActiveAccounts": {
@@ -15,7 +15,12 @@
       },
       "Retry": [
         {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
           "BackoffRate": 2
@@ -48,14 +53,22 @@
             "TimeoutSeconds": 180,
             "Retry": [
               {
-                "ErrorEquals": ["WAFLimitsExceededException", "ThrottlingException"],
+                "ErrorEquals": [
+                  "WAFLimitsExceededException",
+                  "ThrottlingException"
+                ],
                 "IntervalSeconds": 2,
                 "MaxAttempts": 4,
                 "BackoffRate": 2.5,
                 "JitterStrategy": "FULL"
               },
               {
-                "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
                 "IntervalSeconds": 2,
                 "MaxAttempts": 3,
                 "BackoffRate": 2
@@ -63,7 +76,9 @@
             ],
             "Catch": [
               {
-                "ErrorEquals": ["States.ALL"],
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
                 "ResultPath": "$.error",
                 "Next": "MarkAccountDegraded"
               }
@@ -83,65 +98,121 @@
         }
       },
       "ResultPath": "$.collection",
-      "Next": "RunPostSyncEngines"
+      "Next": "EnqueueThreatIntelLookups"
     },
-    "RunPostSyncEngines": {
-      "Type": "Parallel",
-      "ResultPath": "$.engines",
-      "Branches": [
+    "EnqueueThreatIntelLookups": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TiEnrichmentFunctionArn}",
+        "Payload": {
+          "mode.$": "$.mode"
+        }
+      },
+      "ResultSelector": {
+        "summary.$": "$.Payload"
+      },
+      "ResultPath": "$.engines.ti",
+      "Retry": [
         {
-          "StartAt": "RunDriftAndScoringEngine",
-          "States": {
-            "RunDriftAndScoringEngine": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "Parameters": {
-                "FunctionName": "${DriftScoringFunctionArn}",
-                "Payload": {
-                  "mode.$": "$.mode"
-                }
-              },
-              "OutputPath": "$.Payload",
-              "End": true
-            }
-          }
-        },
-        {
-          "StartAt": "RunDetectionAndCampaignEngine",
-          "States": {
-            "RunDetectionAndCampaignEngine": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "Parameters": {
-                "FunctionName": "${DetectionCampaignFunctionArn}",
-                "Payload": {
-                  "mode.$": "$.mode"
-                }
-              },
-              "OutputPath": "$.Payload",
-              "End": true
-            }
-          }
-        },
-        {
-          "StartAt": "EnqueueThreatIntelLookups",
-          "States": {
-            "EnqueueThreatIntelLookups": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "Parameters": {
-                "FunctionName": "${TiEnrichmentFunctionArn}",
-                "Payload": {
-                  "mode.$": "$.mode"
-                }
-              },
-              "OutputPath": "$.Payload",
-              "End": true
-            }
-          }
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
         }
       ],
-      "End": true
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.engines.ti_error",
+          "Next": "RunDetectionAndCampaignEngine"
+        }
+      ],
+      "Next": "RunDetectionAndCampaignEngine"
+    },
+    "RunDetectionAndCampaignEngine": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DetectionCampaignFunctionArn}",
+        "Payload": {
+          "mode.$": "$.mode"
+        }
+      },
+      "ResultSelector": {
+        "summary.$": "$.Payload"
+      },
+      "ResultPath": "$.engines.detection",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.engines.detection_error",
+          "Next": "RunDriftAndScoringEngine"
+        }
+      ],
+      "Next": "RunDriftAndScoringEngine"
+    },
+    "RunDriftAndScoringEngine": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DriftScoringFunctionArn}",
+        "Payload": {
+          "mode.$": "$.mode"
+        }
+      },
+      "ResultSelector": {
+        "summary.$": "$.Payload"
+      },
+      "ResultPath": "$.engines.drift_scoring",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.engines.drift_scoring_error",
+          "Next": "SyncFinished"
+        }
+      ],
+      "Next": "SyncFinished"
+    },
+    "SyncFinished": {
+      "Type": "Succeed"
     }
   }
 }

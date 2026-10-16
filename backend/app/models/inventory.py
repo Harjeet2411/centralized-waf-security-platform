@@ -54,6 +54,7 @@ class Account(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
     updated_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+    score_evidence: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
 
 
 class Role(Base):
@@ -126,6 +127,7 @@ class WebAcl(Base):
     baseline_config: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     monthly_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), server_default=text("0.00"))
     last_synced_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+    current_config: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
 
 
 class Endpoint(Base):
@@ -201,6 +203,17 @@ class ManagedRuleVersion(Base):
     available_version: Mapped[str] = mapped_column(String(64))
     version_status: Mapped[str] = mapped_column(String(16))
     last_checked_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+
+
+class EngineState(Base):
+    __tablename__ = "engine_state"
+
+    engine: Mapped[str] = mapped_column(String(64), primary_key=True)
+    watermark: Mapped[datetime] = mapped_column(
+        TZ, server_default=text("'1970-01-01 00:00:00+00'::timestamp with time zone")
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(TZ)
+    detail: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
 
 
 class PlatformHealth(Base):
