@@ -288,7 +288,7 @@ docker build -t sas-waf-backend:local backend      # API by default; TTL worker 
 ```
 
 ### Auth in local dev
-Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned in `users` by `sso_subject_id`. There is deliberately **no** dev-login bypass. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
+Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned by `sso_subject_id` — first admin via `python -m app.cli create-admin`, everyone else via `/api/v1/governance/users` (`app/services/registry_service.py`). Privilege changes revoke the user's sessions through the `session:index:{user_id}` set. There is deliberately **no** dev-login bypass. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
 
 ---
 

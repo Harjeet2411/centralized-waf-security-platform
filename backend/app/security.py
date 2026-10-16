@@ -44,11 +44,18 @@ class Principal:
         return rbac_service.account_scope(self.permissions, permission, self.scoped_account_ids)
 
 
+def _user_index_key(user_id) -> str:
+    """Set of a user's live session ids, so deactivation/role changes can revoke them all."""
+    return f"session:index:{user_id}"
+
+
 async def create_session(redis: Redis, response: Response, user: User, mfa: bool) -> str:
     settings = get_settings()
     session_id = secrets.token_urlsafe(32)
     payload = {"user_id": str(user.id), "mfa": mfa, "created_at": datetime.now(UTC).isoformat()}
     await redis.set(_session_key(session_id), json.dumps(payload), ex=settings.session_ttl_seconds)
+    await redis.sadd(_user_index_key(user.id), session_id)
+    await redis.expire(_user_index_key(user.id), settings.session_ttl_seconds)
     response.set_cookie(
         settings.session_cookie_name, session_id,
         max_age=settings.session_ttl_seconds, httponly=True, secure=settings.cookie_secure,
@@ -63,6 +70,16 @@ async def destroy_session(redis: Redis, request: Request, response: Response) ->
     if session_id:
         await redis.delete(_session_key(session_id))
     response.delete_cookie(settings.session_cookie_name, path="/")
+
+
+async def revoke_user_sessions(redis: Redis, user_id) -> int:
+    """Delete every live session of a user. get_principal already rejects inactive users per request; this
+    makes revocation immediate for role changes too and leaves no stale tokens behind."""
+    session_ids = await redis.smembers(_user_index_key(user_id))
+    keys = [_session_key(s) for s in session_ids]
+    removed = await redis.delete(*keys) if keys else 0
+    await redis.delete(_user_index_key(user_id))
+    return removed
 
 
 _UNAUTHENTICATED = HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")

@@ -5,6 +5,13 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Account & User Registry
+### Added
+- Governance API (Security Admin / `MANAGE_USERS` only): `GET/POST /api/v1/governance/accounts`, `PATCH /api/v1/governance/accounts/{account_id}`, `GET/POST /api/v1/governance/users`, `PATCH /api/v1/governance/users/{id}`. Role ARNs default to the StackSet roles and must belong to the registered account; scoped accounts must exist; the last active Security Admin can't be deactivated or demoted; every write is audited (`ACCOUNT_REGISTERED`, `ACCOUNT_UPDATED`, `USER_PROVISIONED`, `USER_UPDATED`, `USER_DEACTIVATED`).
+- Per-user session index (`session:index:{user_id}`): role, scope or active-flag changes revoke all of that user's sessions immediately.
+- Bootstrap CLI `python -m app.cli create-admin | register-accounts` (first admin only once; CSV import idempotent; audited as `cli@sas-platform.internal`).
+- 10 tests (RBAC, validation, audit, revocation, lock-out guard, CLI).
+
 ## [Unreleased] - Milestone 6: Central Account Infrastructure & Lambda Packaging
 ### Added
 - `infra/central_account/platform.yaml`: VPC 10.240.0.0/16 (public / private-app / isolated data tiers, single-AZ NAT), 5 interface endpoints (sts, wafv2, monitoring, logs, states; 1 or 2 AZs) + free S3 gateway endpoint, KMS CMK, RDS PostgreSQL 16 Multi-AZ (encrypted, deletion-protected, secret in the format `lambdas/common/db.py` reads), Redis 7 (TLS + at-rest), generated discovery/response external IDs, TI and OIDC secrets, ECR, WAF-log staging bucket (`aws-waf-logs-*`, replication policy for the logging accounts, 30-day expiry, ingestor trigger), 7-year COMPLIANCE Object Lock audit archive, SNS approvals topic, the 7 pipeline Lambdas (`SASLambdaCollectorExecutionRole` for the collector), the sync state machine with DefinitionSubstitutions and the 30-minute / 6-hour EventBridge schedules.

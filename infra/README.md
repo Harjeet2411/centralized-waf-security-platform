@@ -53,7 +53,12 @@ After deploy:
 
 - **DNS:** point `AlbOriginDomain` (CNAME/alias) at output `AlbDnsName`, and the viewer alias at the CloudFront distribution.
 - **Secrets:** put real values into `sas-waf-prod/ti/provider-keys` and `sas-waf-prod/oidc/client-secret`.
-- **Seed rows:** register the pilot accounts in `accounts` and provision users (by `sso_subject_id`) in `users`. There is no API or CLI for this yet (follow-up). Until then, insert the rows through the migration task pattern.
+- **Bootstrap (one-off tasks, same image, same `run-task` command as step 6 with a different command override):**
+  `["python","-m","app.cli","create-admin","--email","<you>","--name","<name>","--sso-subject","<IdP sub>"]`
+  (works only while no active Security Admin exists), then
+  `["python","-m","app.cli","register-accounts","--file","/tmp/accounts.csv"]` for the 5 pilot accounts.
+  The image has a read-only root FS, so either bake the CSV into a release image or have the first admin use the
+  API instead: `POST /api/v1/governance/accounts` and `POST /api/v1/governance/users` (Security Admin only).
 - **Blocklist rule:** before any IP block can be approved, each WebACL needs a platform-owned IP set referenced by a BLOCK rule named `SAS-Platform-Block*`.
 - **Frontend:** upload the SPA build (Milestone 5) to output `SpaBucketName`, then invalidate the distribution.
 - **Logging accounts:** in each of the 6 full-logging accounts, configure S3 replication of `aws-waf-logs-*` objects into `WafLogBucketName`.
