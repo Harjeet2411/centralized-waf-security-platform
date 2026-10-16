@@ -1,0 +1,38 @@
+[project]
+name = "sas-waf-lambdas"
+version = "0.1.0"
+description = "SAS WAF platform serverless data pipeline (Step Functions fan-out collectors, S3 log ingestion)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.34",
+    "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+    "cfn-lint>=1.10",
+    "pyyaml>=6",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["common*", "account_collector*", "fetch_accounts*", "mark_account_degraded*", "s3_log_ingestor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108"]

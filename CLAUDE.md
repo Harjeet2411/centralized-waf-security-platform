@@ -86,8 +86,16 @@ backend/app/
 backend/alembic/   backend/tests/
 ```
 
-### `lambdas/` (Python 3.12)
-`account_collector`, `s3_log_ingestor`, `detection_campaign_engine`, `drift_scoring_engine`, `ti_enrichment_worker`, `ttl_expiry_worker`. Each has `handler.py` and its own `tests/`. Shared code goes in one `lambdas/common/` package (DB writer, STS helper) — don't duplicate it per function.
+### `lambdas/` (Python 3.12, psycopg 3 sync)
+Built (M2): `fetch_accounts` (Map input), `account_collector` (`handler.py` orchestration · `collect.py` read-only AWS calls · `store.py` idempotent DB writes), `mark_account_degraded` (ASL Catch target), `s3_log_ingestor`. Planned: `drift_scoring_engine`, `detection_campaign_engine`, `ti_enrichment_worker` (M3), `ttl_expiry_worker` (M4). Each function is a package with `handler.py` → Lambda handler `<pkg>.handler.lambda_handler`; the zip holds the package + `common/` + Linux wheels for psycopg. Shared code lives only in `lambdas/common/` (`db.py`, `aws.py`, `normalize.py`). Tests in `lambdas/tests/` (one suite, real Postgres, botocore `Stubber` pins request shapes).
+
+Pipeline facts that are easy to get wrong:
+- Step Functions retries match the Lambda `errorType` = Python exception class name. Throttling `ClientError`s are re-raised as `common.aws.WAFLimitsExceededException` / `ThrottlingException` so the ASL `Retry` matches. Retries sit on the per-account task, **never on the Map** (a Map retry re-runs all 39 accounts).
+- `account_collector` never writes `score_confidence` — the scoring engine (M3) owns it; `mark_account_degraded` sets `NONE` for unreachable accounts.
+- Endpoint deletion happens only for `(region, type)` scopes whose discovery fully succeeded in that run.
+- First-seen WebACL JSON becomes `web_acls.baseline_config`; after that only an approved change may move the baseline.
+- JA3/JA4 are native in full logs. In `GetSampledRequests` they exist only if injected upstream (CloudFront `CloudFront-Viewer-JA4-Fingerprint` header via viewer-request function / `x-ja4` header / `sas:ja4:<hash>` label) — otherwise `NULL`. Never fabricate.
+- Removed WebACLs are not deleted (cascade would erase `waf_events` history). ponytail: add `web_acls.deleted_at` when the drift engine needs it.
 
 ### `infra/`
 - `stacksets/cross-account-waf-roles.yaml` — `SASWafDiscoveryRole` + `SASWafResponseRole` (CloudFormation StackSet, `SERVICE_MANAGED`).
@@ -190,6 +198,9 @@ The existing frontend types are the wire contract. Facts about them that overrid
 | Spec ResponseRole allows `Create*`/`Delete*` | TRD's narrower allow-list + explicit deny. |
 | Spec VPC endpoint `organizations` vs TRD `states` | TRD: `sts, wafv2, monitoring, logs, states`. |
 | Docs camelCase convention | snake_case — §8. |
+| TRD puts the throttling `Retry` on the Map state | On the per-account task (a Map retry re-runs every account). |
+| TRD: ResponseRole trust requires `aws:MultiFactorAuthPresent` | Impossible through a service-role chain. Trust instead requires the response ExternalId + session tag `sas:approval-id=APR-*` + `sts:SourceIdentity` = approver email (lands in CloudTrail). Human MFA is enforced at platform login. Verify on the pilot account. |
+| ResponseRole action list | Adds `elasticloadbalancing:SetWebACL` + `apigateway:SetWebACL` (required by `AssociateWebACL`). CloudFront attach needs `cloudfront:UpdateDistribution`, which is explicitly **denied** (too broad) — CloudFront attachments stay manual. |
 
 Interface VPC endpoints are regional: WAFv2/CloudWatch calls to regions other than the central one go via NAT. CloudFront-scope WAFv2 calls always target `us-east-1`.
 
@@ -245,10 +256,12 @@ cp .env.example .env
 ```
 Migration 0001 is hand-written SQL (CHECKs, trigger, partial/GiST/GIN indexes). For later migrations, autogenerate then review — `tests/test_schema.py` fails if ORM models and the migrated schema drift apart.
 
-### Lambdas (`lambdas/`)
+### Lambdas (`lambdas/`) — shares the backend venv
 ```bash
-pytest -v lambdas/
-ruff check lambdas/
+../backend/.venv/Scripts/python -m pip install -e ".[dev]"
+../backend/.venv/Scripts/python -m pytest -q        # migrates sas_waf_test via backend Alembic
+../backend/.venv/Scripts/ruff check .
+../backend/.venv/Scripts/cfn-lint ../infra/stacksets/cross-account-waf-roles.yaml
 ```
 
 ### Auth in local dev

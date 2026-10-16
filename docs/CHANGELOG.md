@@ -5,6 +5,15 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Milestone 2: Cross-Account Serverless Data Pipeline
+### Added
+- `infra/stacksets/cross-account-waf-roles.yaml` (cfn-lint clean): read-only `SASWafDiscoveryRole` (ExternalId trust) and `SASWafResponseRole` (ExternalId + `sas:approval-id` session tag + approver `SourceIdentity`; explicit deny on WAF deletes, `iam:*`, `organizations:*`, `s3:Delete*`, role chaining, `cloudfront:UpdateDistribution`).
+- `infra/central_account/step_functions.asl.json`: fetch -> Map (`MaxConcurrency: 20`, throttling retry 2s/x4/2.5 + Catch on the per-account task) -> post-sync engines (M3 targets).
+- `lambdas/account_collector`: ALB / REST API stage / CloudFront discovery with WAF coverage (`PROTECTED`, `PARTIALLY_PROTECTED` = attached but nothing enforces, `UNPROTECTED`, `UNKNOWN`), WebACL rule trees, managed rule version status, per-rule-metric `GetSampledRequests` with SHA-256 dedup, exact 24h CloudWatch totals, per-account health. Idempotent; partial failures mark the account `DEGRADED` with evidence.
+- `lambdas/s3_log_ingestor`: streams gzip WAF logs (native JA3/JA4) into `waf_events` as `FULL_LOG`; redelivery-safe.
+- `lambdas/fetch_accounts`, `lambdas/mark_account_degraded`; shared `lambdas/common` (psycopg DB, STS/throttle mapping, event normalization).
+- 27 Lambda/IaC tests (real Postgres, botocore Stubber request-shape pins, IAM least-privilege assertions, ASL graph checks).
+
 ## [Unreleased] - Milestone 1: Database Layer & FastAPI Control Plane
 ### Added
 - `backend/` FastAPI control plane (Python 3.12): settings with deploy-time guards (no insecure cookies / MFA bypass outside local/test), async SQLAlchemy 2.0 engine, `redis.asyncio` client, `/healthz`.

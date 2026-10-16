@@ -1,0 +1,147 @@
+{
+  "Comment": "SAS 39-account parallel WAF discovery & telemetry sync. Input: {\"mode\": \"full\" | \"telemetry\"}. ${...} values are DefinitionSubstitutions. Retries sit on the per-account task (not the Map) so one throttled account never re-runs the other 38.",
+  "StartAt": "FetchActiveAccounts",
+  "States": {
+    "FetchActiveAccounts": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FetchAccountsFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "mode.$": "$.Payload.mode",
+        "accounts.$": "$.Payload.accounts"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "PerAccountFanOut"
+    },
+    "PerAccountFanOut": {
+      "Type": "Map",
+      "ItemsPath": "$.accounts",
+      "MaxConcurrency": 20,
+      "ItemSelector": {
+        "account.$": "$$.Map.Item.Value",
+        "mode.$": "$.mode"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "CollectAccountWafData",
+        "States": {
+          "CollectAccountWafData": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${AccountCollectorFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "TimeoutSeconds": 180,
+            "Retry": [
+              {
+                "ErrorEquals": ["WAFLimitsExceededException", "ThrottlingException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 4,
+                "BackoffRate": 2.5,
+                "JitterStrategy": "FULL"
+              },
+              {
+                "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "MarkAccountDegraded"
+              }
+            ],
+            "End": true
+          },
+          "MarkAccountDegraded": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${MarkAccountDegradedFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.collection",
+      "Next": "RunPostSyncEngines"
+    },
+    "RunPostSyncEngines": {
+      "Type": "Parallel",
+      "ResultPath": "$.engines",
+      "Branches": [
+        {
+          "StartAt": "RunDriftAndScoringEngine",
+          "States": {
+            "RunDriftAndScoringEngine": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${DriftScoringFunctionArn}",
+                "Payload": {
+                  "mode.$": "$.mode"
+                }
+              },
+              "OutputPath": "$.Payload",
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "RunDetectionAndCampaignEngine",
+          "States": {
+            "RunDetectionAndCampaignEngine": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${DetectionCampaignFunctionArn}",
+                "Payload": {
+                  "mode.$": "$.mode"
+                }
+              },
+              "OutputPath": "$.Payload",
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "EnqueueThreatIntelLookups",
+          "States": {
+            "EnqueueThreatIntelLookups": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${TiEnrichmentFunctionArn}",
+                "Payload": {
+                  "mode.$": "$.mode"
+                }
+              },
+              "OutputPath": "$.Payload",
+              "End": true
+            }
+          }
+        }
+      ],
+      "End": true
+    }
+  }
+}

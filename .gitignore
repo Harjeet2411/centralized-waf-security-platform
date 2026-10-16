@@ -12,3 +12,6 @@ __pycache__/
 # Frontend
 WAF_PLATFORM/node_modules/
 WAF_PLATFORM/dist/
+
+# Git Bash crash dumps
+*.stackdump

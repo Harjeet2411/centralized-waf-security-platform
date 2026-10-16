@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SAS WAF Security Platform - cross-account roles for each of the 39 spoke accounts (deploy as a SERVICE_MANAGED
+  StackSet). SASWafDiscoveryRole is read-only for the data pipeline; SASWafResponseRole is the only write path,
+  assumable solely by the approval executor with a per-change approval tag and approver source identity.
+
+Parameters:
+  CentralAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    Description: Central Security Account that hosts the platform.
+  DiscoveryExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: sts:ExternalId required by SASWafDiscoveryRole (same value as the central Secrets Manager secret).
+  ResponseExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: sts:ExternalId required by SASWafResponseRole. Must differ from DiscoveryExternalId.
+
+Resources:
+  SASWafDiscoveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SASWafDiscoveryRole
+      Description: Read-only WAF, endpoint and metric discovery for the SAS WAF platform pipeline.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CentralCollectorOnly
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/SASLambdaCollectorExecutionRole"
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref DiscoveryExternalId
+      Policies:
+        - PolicyName: sas-waf-discovery-read-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WafV2Read
+                Effect: Allow
+                Action:
+                  - wafv2:ListWebACLs
+                  - wafv2:GetWebACL
+                  - wafv2:GetWebACLForResource
+                  - wafv2:ListResourcesForWebACL
+                  - wafv2:GetSampledRequests
+                  - wafv2:GetLoggingConfiguration
+                  - wafv2:ListLoggingConfigurations
+                  - wafv2:ListRuleGroups
+                  - wafv2:GetRuleGroup
+                  - wafv2:ListIPSets
+                  - wafv2:GetIPSet
+                  - wafv2:ListAvailableManagedRuleGroups
+                  - wafv2:ListAvailableManagedRuleGroupVersions
+                  - wafv2:DescribeManagedRuleGroup
+                Resource: "*"
+              - Sid: EndpointDiscovery
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeListeners
+                  - cloudfront:ListDistributions
+                  - cloudfront:GetDistribution
+                  - ec2:DescribeRegions
+                Resource: "*"
+              - Sid: ApiGatewayReadOnly
+                Effect: Allow
+                Action: apigateway:GET
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:apigateway:*::/restapis"
+                  - !Sub "arn:${AWS::Partition}:apigateway:*::/restapis/*"
+              - Sid: Metrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: "*"
+
+  SASWafResponseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SASWafResponseRole
+      Description: >-
+        Approved WAF changes only. Assumed by the central approval executor after the 12-step lifecycle; every
+        session carries the approval code (session tag) and the approver email (source identity, in CloudTrail).
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # A service role chain cannot carry the human's MFA claim (aws:MultiFactorAuthPresent is never true
+          # here); MFA is enforced at platform login (IAM Identity Center) and bound to the change by requiring
+          # the approval tag + approver source identity on every session.
+          - Sid: ApprovalExecutorOnly
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/SASFastAPIResponseExecutorRole"
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+              - sts:SetSourceIdentity
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ResponseExternalId
+              StringLike:
+                aws:RequestTag/sas:approval-id: "APR-*"
+                sts:SourceIdentity: "*@*"
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - sas:approval-id
+      Policies:
+        - PolicyName: sas-waf-controlled-response
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ApprovedWafChanges
+                Effect: Allow
+                Action:
+                  - wafv2:GetWebACL
+                  - wafv2:GetIPSet
+                  - wafv2:GetWebACLForResource
+                  - wafv2:ListResourcesForWebACL
+                  - wafv2:GetLoggingConfiguration
+                  - wafv2:UpdateIPSet
+                  - wafv2:UpdateWebACL
+                  - wafv2:AssociateWebACL
+                  - wafv2:DisassociateWebACL
+                  - wafv2:PutLoggingConfiguration
+                Resource: "*"
+              - Sid: RegionalAssociationTargets
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:SetWebACL
+                  - apigateway:SetWebACL
+                Resource: "*"
+              - Sid: NeverDestructive
+                Effect: Deny
+                Action:
+                  - wafv2:DeleteWebACL
+                  - wafv2:DeleteRuleGroup
+                  - wafv2:DeleteIPSet
+                  - wafv2:DeleteLoggingConfiguration
+                  - wafv2:DeleteFirewallManagerRuleGroups
+                  - iam:*
+                  - organizations:*
+                  - s3:Delete*
+                  - sts:AssumeRole
+                  - cloudfront:UpdateDistribution
+                Resource: "*"
+
+Outputs:
+  DiscoveryRoleArn:
+    Value: !GetAtt SASWafDiscoveryRole.Arn
+  ResponseRoleArn:
+    Value: !GetAtt SASWafResponseRole.Arn
