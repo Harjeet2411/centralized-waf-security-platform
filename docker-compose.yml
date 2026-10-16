@@ -1,0 +1,29 @@
+# Local development dependencies only. Production uses RDS PostgreSQL 16 + ElastiCache Redis 7.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sas
+      POSTGRES_PASSWORD: sas_local_dev
+      POSTGRES_DB: sas_waf
+    ports:
+      - "5433:5432"  # host 5433: a native PostgreSQL may already own 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sas -d sas_waf"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  pgdata:
