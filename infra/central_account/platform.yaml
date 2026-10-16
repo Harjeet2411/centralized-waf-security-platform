@@ -1,0 +1,901 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SAS WAF Security Platform - central security account, platform stack: VPC (10.240.0.0/16), private AWS API
+  endpoints, RDS PostgreSQL 16 (Multi-AZ), ElastiCache Redis 7, secrets, WAF-log staging + audit archive buckets,
+  the 7 pipeline Lambdas, the 39-account sync state machine and its EventBridge schedules.
+  Deploy order: this stack -> StackSet (spokes, using the generated external IDs) -> app.yaml. See infra/README.md.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: sas-waf-prod
+    AllowedPattern: "^[a-z][a-z0-9-]{2,30}$"
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket holding lambdas/dist output (function zips + step_functions.asl.json).
+  ArtifactPrefix:
+    Type: String
+    Default: releases/latest/
+    Description: Key prefix of the uploaded build, ending with "/".
+  DbInstanceClass:
+    Type: String
+    Default: db.t3.large
+    AllowedValues: [db.t3.large, db.t4g.large, db.t3.medium, db.t4g.medium]
+  DbEngineVersion:
+    Type: String
+    Default: "16.6"
+  DbAllocatedStorage:
+    Type: Number
+    Default: 50
+    MinValue: 20
+  HighAvailabilityEndpoints:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Interface endpoints in both AZs (+~$36/month) instead of one.
+  LoggingAccountIds:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: The full-WAF-logging accounts allowed to replicate aws-waf-logs-* objects into the staging bucket.
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email subscribed to approval notifications.
+
+Conditions:
+  HaEndpoints: !Equals [!Ref HighAvailabilityEndpoints, "true"]
+  HasLoggingAccounts: !Not [!Equals [!Join ["", !Ref LoggingAccountIds], ""]]
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+  # --- network -------------------------------------------------------------------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.240.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: !Ref EnvironmentName}]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-public-a"}]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-public-b"}]
+
+  AppSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-app-a"}]
+
+  AppSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-app-b"}]
+
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.21.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-data-a"}]
+
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.240.22.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${EnvironmentName}-data-b"}]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # ponytail: single-AZ NAT (TRD 1.1, cost). An AZ-a outage stops outbound TI calls and non-endpoint AWS APIs;
+  # add a second NAT in public-b if the pipeline must survive an AZ loss.
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  AppSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  AppSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  DataRouteTable:  # no internet route: the database tier is unreachable from and cannot reach the internet
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DataSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetA
+      RouteTableId: !Ref DataRouteTable
+
+  DataSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetB
+      RouteTableId: !Ref DataRouteTable
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Pipeline Lambdas (egress only)
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: "AWS APIs via endpoints/NAT, TI providers"}
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FastAPI tasks (ingress from the ALB is added by app.yaml)
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: "AWS APIs, OIDC IdP"}
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Interface VPC endpoints
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 10.240.0.0/16, Description: HTTPS from the VPC}
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS PostgreSQL
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref LambdaSecurityGroup,
+           Description: Pipeline Lambdas}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup,
+           Description: FastAPI tasks}
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ElastiCache Redis
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 6379, ToPort: 6379, SourceSecurityGroupId: !Ref LambdaSecurityGroup,
+           Description: Pipeline Lambdas}
+        - {IpProtocol: tcp, FromPort: 6379, ToPort: 6379, SourceSecurityGroupId: !Ref AppSecurityGroup,
+           Description: FastAPI tasks}
+
+  # TRD 1.2: the five interface endpoints keep STS / WAFv2 / CloudWatch / Logs / Step Functions traffic private.
+  StsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sts"
+      VpcId: !Ref Vpc
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [HaEndpoints, [!Ref AppSubnetA, !Ref AppSubnetB], [!Ref AppSubnetA]]
+
+  WafV2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.wafv2"
+      VpcId: !Ref Vpc
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [HaEndpoints, [!Ref AppSubnetA, !Ref AppSubnetB], [!Ref AppSubnetA]]
+
+  MonitoringEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.monitoring"
+      VpcId: !Ref Vpc
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [HaEndpoints, [!Ref AppSubnetA, !Ref AppSubnetB], [!Ref AppSubnetA]]
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      VpcId: !Ref Vpc
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [HaEndpoints, [!Ref AppSubnetA, !Ref AppSubnetB], [!Ref AppSubnetA]]
+
+  StatesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.states"
+      VpcId: !Ref Vpc
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [HaEndpoints, [!Ref AppSubnetA, !Ref AppSubnetB], [!Ref AppSubnetA]]
+
+  S3GatewayEndpoint:  # free; keeps WAF-log reads and Lambda/ECR layer pulls off the NAT
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref Vpc
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+  # --- encryption + secrets ---------------------------------------------------------------------------------
+  DataKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "${EnvironmentName} data at rest (RDS, Redis, secrets, audit archive)"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal: {AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}
+            Action: "kms:*"
+            Resource: "*"
+
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${EnvironmentName}-data"
+      TargetKeyId: !Ref DataKey
+
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/rds/master"
+      Description: RDS master credentials; host/port added by the target attachment (lambdas/common/db.py format).
+      KmsKeyId: !Ref DataKey
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "sas_admin", "dbname": "sas_waf"}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludeCharacters: "\"@/\\' "
+
+  DiscoveryExternalIdSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/sts/discovery-external-id"
+      Description: sts:ExternalId for SASWafDiscoveryRole - pass the same value to the StackSet.
+      KmsKeyId: !Ref DataKey
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+
+  ResponseExternalIdSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/sts/response-external-id"
+      Description: sts:ExternalId for SASWafResponseRole - pass the same value to the StackSet.
+      KmsKeyId: !Ref DataKey
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+
+  ThreatIntelKeysSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/ti/provider-keys"
+      Description: JSON {"abuseipdb", "greynoise", "virustotal"} API keys. Empty value disables that provider.
+      KmsKeyId: !Ref DataKey
+      SecretString: '{"abuseipdb": "", "greynoise": "", "virustotal": ""}'
+
+  OidcClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/oidc/client-secret"
+      Description: OIDC client secret of the IdP fronting IAM Identity Center. Replace after deploy.
+      KmsKeyId: !Ref DataKey
+      SecretString: replace-me
+
+  # --- data stores --------------------------------------------------------------------------------------------
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private data subnets
+      SubnetIds: [!Ref DataSubnetA, !Ref DataSubnetB]
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      DBName: sas_waf
+      MultiAZ: true
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DataKey
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DatabaseSecret}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DatabaseSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      PubliclyAccessible: false
+      DeletionProtection: true
+      BackupRetentionPeriod: 14
+      CopyTagsToSnapshot: true
+      AutoMinorVersionUpgrade: true
+      EnablePerformanceInsights: false
+
+  DatabaseSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DatabaseSecret
+      TargetId: !Ref Database
+      TargetType: AWS::RDS::DBInstance
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Private data subnets
+      SubnetIds: [!Ref DataSubnetA, !Ref DataSubnetB]
+
+  # ponytail: single cache.t3.micro node, no failover - Redis holds only the TI cache, refresh locks and sessions;
+  # losing it costs re-logins and a TI re-fetch, never data. Add a replica if session continuity matters.
+  Redis:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: !Sub "${EnvironmentName} TI cache, sync locks, sessions"
+      Engine: redis
+      EngineVersion: "7.1"
+      CacheNodeType: cache.t3.micro
+      NumCacheClusters: 1
+      AutomaticFailoverEnabled: false
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      KmsKeyId: !Ref DataKey
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds: [!Ref RedisSecurityGroup]
+
+  # --- storage ----------------------------------------------------------------------------------------------
+  WafLogBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: IngestorS3Permission
+    Properties:
+      BucketName: !Sub "aws-waf-logs-sas-${AWS::AccountId}-${AWS::Region}"  # WAF requires the aws-waf-logs- prefix
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      VersioningConfiguration: {Status: Enabled}  # required as a replication destination
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}}]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: raw-logs-are-normalized-into-rds
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration: {NoncurrentDays: 1}
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt S3LogIngestorFunction.Arn
+            Filter: {S3Key: {Rules: [{Name: suffix, Value: .gz}]}}
+
+  WafLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WafLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt WafLogBucket.Arn, !Sub "${WafLogBucket.Arn}/*"]
+            Condition: {Bool: {aws:SecureTransport: "false"}}
+          - !If
+            - HasLoggingAccounts
+            - Sid: ReplicationFromLoggingAccounts
+              Effect: Allow
+              Principal:
+                AWS: !Split
+                  - ","
+                  - !Sub
+                    - "arn:${AWS::Partition}:iam::${Accounts}:root"
+                    - Accounts: !Join [":root,arn:aws:iam::", !Ref LoggingAccountIds]  # Join delimiter must be literal
+              Action: [s3:ReplicateObject, s3:ReplicateDelete, s3:ReplicateTags, s3:ObjectOwnerOverrideToBucketOwner]
+              Resource: !Sub "${WafLogBucket.Arn}/*"
+            - !Ref AWS::NoValue
+
+  AuditArchiveBucket:  # NFR: audit_events kept 7 years in S3 Object Lock (export job writes here)
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule: {DefaultRetention: {Mode: COMPLIANCE, Years: 7}}
+      VersioningConfiguration: {Status: Enabled}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  BackendRepository:  # backend/Dockerfile image; must exist (and hold an image) before app.yaml is deployed
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/backend"
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EncryptionConfiguration: {EncryptionType: KMS, KmsKey: !Ref DataKey}
+      LifecyclePolicy:
+        LifecyclePolicyText: >-
+          {"rules": [{"rulePriority": 1, "description": "keep the 20 most recent images",
+          "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 20},
+          "action": {"type": "expire"}}]}
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${EnvironmentName}-approvals"
+      KmsMasterKeyId: alias/aws/sns
+
+  ApprovalEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # --- pipeline IAM -------------------------------------------------------------------------------------------
+  CollectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SASLambdaCollectorExecutionRole  # the only principal SASWafDiscoveryRole trusts (StackSet)
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      Policies:
+        - PolicyName: collector
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::*:role/SASWafDiscoveryRole"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!Ref DatabaseSecret, !Ref DiscoveryExternalIdSecret]
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !GetAtt DataKey.Arn
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      Policies:
+        - PolicyName: pipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!Ref DatabaseSecret, !Ref ThreatIntelKeysSecret]
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !GetAtt DataKey.Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::aws-waf-logs-sas-${AWS::AccountId}-${AWS::Region}/*"
+
+  # --- pipeline Lambdas (zips from lambdas/build.py) -------------------------------------------------------------
+  FetchAccountsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-fetch-accounts", RetentionInDays: 30}
+
+  FetchAccountsFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: FetchAccountsLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-fetch-accounts"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: fetch_accounts.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}fetch_accounts.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables: {SAS_DB_SECRET_ARN: !Ref DatabaseSecret}
+
+  AccountCollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-account-collector", RetentionInDays: 30}
+
+  AccountCollectorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AccountCollectorLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-account-collector"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: account_collector.handler.lambda_handler
+      Role: !GetAtt CollectorRole.Arn
+      Timeout: 170  # below the ASL task TimeoutSeconds (180)
+      MemorySize: 512
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}account_collector.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          SAS_DB_SECRET_ARN: !Ref DatabaseSecret
+          SAS_DISCOVERY_EXTERNAL_ID_SECRET_ARN: !Ref DiscoveryExternalIdSecret
+
+  MarkAccountDegradedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-mark-account-degraded", RetentionInDays: 30}
+
+  MarkAccountDegradedFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: MarkAccountDegradedLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-mark-account-degraded"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: mark_account_degraded.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}mark_account_degraded.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables: {SAS_DB_SECRET_ARN: !Ref DatabaseSecret}
+
+  S3LogIngestorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-s3-log-ingestor", RetentionInDays: 30}
+
+  S3LogIngestorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: S3LogIngestorLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-s3-log-ingestor"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: s3_log_ingestor.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}s3_log_ingestor.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables: {SAS_DB_SECRET_ARN: !Ref DatabaseSecret}
+
+  IngestorS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref S3LogIngestorFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:${AWS::Partition}:s3:::aws-waf-logs-sas-${AWS::AccountId}-${AWS::Region}"
+
+  TiEnrichmentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-ti-enrichment-worker", RetentionInDays: 30}
+
+  TiEnrichmentFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: TiEnrichmentLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-ti-enrichment-worker"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: ti_enrichment_worker.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}ti_enrichment_worker.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          SAS_DB_SECRET_ARN: !Ref DatabaseSecret
+          SAS_TI_SECRET_ARN: !Ref ThreatIntelKeysSecret
+          SAS_REDIS_URL: !Sub "rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0"
+          SAS_WATERMARK_LAG_SECONDS: "120"
+
+  DetectionCampaignLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-detection-campaign-engine", RetentionInDays: 30}
+
+  DetectionCampaignFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: DetectionCampaignLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-detection-campaign-engine"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: detection_campaign_engine.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}detection_campaign_engine.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          SAS_DB_SECRET_ARN: !Ref DatabaseSecret
+          SAS_WATERMARK_LAG_SECONDS: "120"
+
+  DriftScoringLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-drift-scoring-engine", RetentionInDays: 30}
+
+  DriftScoringFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: DriftScoringLogGroup
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-drift-scoring-engine"
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: drift_scoring_engine.handler.lambda_handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Sub "${ArtifactPrefix}drift_scoring_engine.zip"}
+      VpcConfig:
+        SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB]
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables: {SAS_DB_SECRET_ARN: !Ref DatabaseSecret}
+
+  # --- orchestration --------------------------------------------------------------------------------------------
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: states.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: sync
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt FetchAccountsFunction.Arn
+                  - !GetAtt AccountCollectorFunction.Arn
+                  - !GetAtt MarkAccountDegradedFunction.Arn
+                  - !GetAtt TiEnrichmentFunction.Arn
+                  - !GetAtt DetectionCampaignFunction.Arn
+                  - !GetAtt DriftScoringFunction.Arn
+              - Effect: Allow  # CloudWatch Logs vended delivery for state machine logging (account-level APIs)
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${EnvironmentName}-sync"
+      RetentionInDays: 30
+
+  SyncStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${EnvironmentName}-SAS-39Account-Sync"
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt StateMachineRole.Arn
+      DefinitionS3Location:
+        Bucket: !Ref ArtifactBucket
+        Key: !Sub "${ArtifactPrefix}step_functions.asl.json"
+      DefinitionSubstitutions:
+        FetchAccountsFunctionArn: !GetAtt FetchAccountsFunction.Arn
+        AccountCollectorFunctionArn: !GetAtt AccountCollectorFunction.Arn
+        MarkAccountDegradedFunctionArn: !GetAtt MarkAccountDegradedFunction.Arn
+        TiEnrichmentFunctionArn: !GetAtt TiEnrichmentFunction.Arn
+        DetectionCampaignFunctionArn: !GetAtt DetectionCampaignFunction.Arn
+        DriftScoringFunctionArn: !GetAtt DriftScoringFunction.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations: [{CloudWatchLogsLogGroup: {LogGroupArn: !GetAtt StateMachineLogGroup.Arn}}]
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: events.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: start-sync
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: states:StartExecution, Resource: !Ref SyncStateMachine}
+
+  TelemetrySyncSchedule:  # TRD 3.1: sampled requests + CloudWatch metrics
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${EnvironmentName}-telemetry-sync"
+      ScheduleExpression: rate(30 minutes)
+      State: ENABLED
+      Targets:
+        - Id: sync
+          Arn: !Ref SyncStateMachine
+          RoleArn: !GetAtt SchedulerRole.Arn
+          Input: '{"mode": "telemetry"}'
+
+  FullSyncSchedule:  # TRD 3.1: endpoint discovery, rule trees, managed versions, drift
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${EnvironmentName}-full-sync"
+      ScheduleExpression: rate(6 hours)
+      State: ENABLED
+      Targets:
+        - Id: sync
+          Arn: !Ref SyncStateMachine
+          RoleArn: !GetAtt SchedulerRole.Arn
+          Input: '{"mode": "full"}'
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: {Name: !Sub "${EnvironmentName}-VpcId"}
+  PublicSubnets:
+    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+    Export: {Name: !Sub "${EnvironmentName}-PublicSubnets"}
+  AppSubnets:
+    Value: !Join [",", [!Ref AppSubnetA, !Ref AppSubnetB]]
+    Export: {Name: !Sub "${EnvironmentName}-AppSubnets"}
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export: {Name: !Sub "${EnvironmentName}-AppSecurityGroupId"}
+  DatabaseEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: {Name: !Sub "${EnvironmentName}-DatabaseEndpoint"}
+  DatabaseSecretArn:
+    Value: !Ref DatabaseSecret
+    Export: {Name: !Sub "${EnvironmentName}-DatabaseSecretArn"}
+  RedisUrl:
+    Value: !Sub "rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0"
+    Export: {Name: !Sub "${EnvironmentName}-RedisUrl"}
+  DataKeyArn:
+    Value: !GetAtt DataKey.Arn
+    Export: {Name: !Sub "${EnvironmentName}-DataKeyArn"}
+  DiscoveryExternalIdSecretArn:
+    Value: !Ref DiscoveryExternalIdSecret
+  ResponseExternalIdSecretArn:
+    Value: !Ref ResponseExternalIdSecret
+    Export: {Name: !Sub "${EnvironmentName}-ResponseExternalIdSecretArn"}
+  OidcClientSecretArn:
+    Value: !Ref OidcClientSecret
+    Export: {Name: !Sub "${EnvironmentName}-OidcClientSecretArn"}
+  ApprovalTopicArn:
+    Value: !Ref ApprovalTopic
+    Export: {Name: !Sub "${EnvironmentName}-ApprovalTopicArn"}
+  SyncStateMachineArn:
+    Value: !Ref SyncStateMachine
+    Export: {Name: !Sub "${EnvironmentName}-SyncStateMachineArn"}
+  BackendRepositoryUri:
+    Value: !GetAtt BackendRepository.RepositoryUri
+  WafLogBucketName:
+    Value: !Ref WafLogBucket
+  AuditArchiveBucketName:
+    Value: !Ref AuditArchiveBucket
+    Export: {Name: !Sub "${EnvironmentName}-AuditArchiveBucket"}

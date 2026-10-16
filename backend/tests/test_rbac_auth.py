@@ -189,3 +189,9 @@ async def test_routes_registered_and_healthz(client):
     paths = set(app.openapi()["paths"])
     assert {"/api/v1/bootstrap", "/api/v1/me", "/api/v1/auth/login", "/api/v1/auth/callback"} <= paths
     assert (await client.get("/healthz")).json() == {"status": "ok"}
+
+
+def test_database_url_composed_from_ecs_secret_parts():
+    s = Settings(environment="test", db_host="db.internal", db_user="sas_admin", db_password="p@ss/w:rd")
+    assert s.database_url == "postgresql+asyncpg://sas_admin:p%40ss%2Fw%3Ard@db.internal:5432/sas_waf?ssl=require"
+    assert Settings(environment="test", database_url="postgresql+asyncpg://x").database_url == "postgresql+asyncpg://x"

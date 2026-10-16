@@ -5,6 +5,15 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Milestone 6: Central Account Infrastructure & Lambda Packaging
+### Added
+- `infra/central_account/platform.yaml`: VPC 10.240.0.0/16 (public / private-app / isolated data tiers, single-AZ NAT), 5 interface endpoints (sts, wafv2, monitoring, logs, states; 1 or 2 AZs) + free S3 gateway endpoint, KMS CMK, RDS PostgreSQL 16 Multi-AZ (encrypted, deletion-protected, secret in the format `lambdas/common/db.py` reads), Redis 7 (TLS + at-rest), generated discovery/response external IDs, TI and OIDC secrets, ECR, WAF-log staging bucket (`aws-waf-logs-*`, replication policy for the logging accounts, 30-day expiry, ingestor trigger), 7-year COMPLIANCE Object Lock audit archive, SNS approvals topic, the 7 pipeline Lambdas (`SASLambdaCollectorExecutionRole` for the collector), the sync state machine with DefinitionSubstitutions and the 30-minute / 6-hour EventBridge schedules.
+- `infra/central_account/app.yaml`: FastAPI on ECS Fargate (read-only root FS, task role `SASFastAPIResponseExecutorRole`), ALB that only forwards CloudFront-verified requests, AWS WAF on the ALB, SPA on private S3 via CloudFront OAC with an SPA-routing function, TTL-expiry worker as a 5-minute scheduled task.
+- `backend/Dockerfile` (non-root, read-only-FS ready; same image for API, TTL worker and migrations); backend builds `database_url` from `SAS_DB_HOST/USER/PASSWORD` injected by ECS.
+- `lambdas/build.py`: one zip per function with Linux x86_64 wheels (verified importing in the official Lambda python3.12 image).
+- `infra/README.md`: deploy order (pilot accounts first) and a monthly cost table - ~$407 on-demand, ~$345 with a 1-year RDS reservation; the spec's estimate under-counted interface endpoints, public IPv4, platform WAF and Fargate.
+- 13 IaC/build tests (role names vs StackSet trust, ASL substitutions, schedules, encryption, public-access blocks, Object Lock, CloudFront-only ALB, TTL worker wiring).
+
 ## [Unreleased] - Milestone 4: Simulation, Guardrails, Controlled Response & Audit
 ### Added
 - Migration `0003`: `approval_decisions` (multi-person approvals), `changes.rollback_available`, and the `trg_approvals_allow_list` trigger that refuses any IP-block approval overlapping an active allow-list CIDR (checks `target` and every `proposed_state.add` entry).

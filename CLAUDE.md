@@ -99,9 +99,12 @@ Pipeline facts that are easy to get wrong:
 - JA3/JA4 are native in full logs. In `GetSampledRequests` they exist only if injected upstream (CloudFront `CloudFront-Viewer-JA4-Fingerprint` header via viewer-request function / `x-ja4` header / `sas:ja4:<hash>` label) — otherwise `NULL`. Never fabricate.
 - Removed WebACLs are not deleted (cascade would erase `waf_events` history). ponytail: add `web_acls.deleted_at` when the drift engine needs it.
 
-### `infra/`
+### `infra/` (see `infra/README.md` for deploy order and the cost table)
 - `stacksets/cross-account-waf-roles.yaml` — `SASWafDiscoveryRole` + `SASWafResponseRole` (CloudFormation StackSet, `SERVICE_MANAGED`).
-- `central_account/` — VPC `10.240.0.0/16`, Multi-AZ RDS PostgreSQL 16, ElastiCache Redis 7, 5 interface endpoints (`sts`, `wafv2`, `monitoring`, `logs`, `states`), Step Functions (`step_functions.asl.json`), EventBridge, ALB + WAF + CloudFront.
+- `central_account/platform.yaml` — VPC `10.240.0.0/16`, 5 interface endpoints + S3 gateway endpoint, Multi-AZ RDS PostgreSQL 16, Redis 7, KMS, secrets, ECR, WAF-log + audit-archive buckets, SNS, the 7 Lambdas, Step Functions + EventBridge schedules.
+- `central_account/app.yaml` — ECS Fargate API (task role `SASFastAPIResponseExecutorRole`), ALB + WAF reachable only via CloudFront (`X-Origin-Verify`), SPA on S3/CloudFront, TTL-expiry scheduled task.
+- `central_account/step_functions.asl.json` — uploaded by `lambdas/build.py` next to the zips.
+- **Cost:** default config is ~$407/month on-demand, over the $350 ceiling. It fits (~$345) only with a 1-year RDS reservation. Any new always-on resource must be added to the cost table in `infra/README.md`.
 
 ### Cross-account IAM (TRD §2 is authoritative)
 - **`SASWafDiscoveryRole`** — read-only; trusted only by `SASLambdaCollectorExecutionRole` with `sts:ExternalId`. `wafv2:List*/Get*/GetSampledRequests/ListAvailableManagedRuleGroupVersions`, `elasticloadbalancing:Describe*`, `apigateway:GET`, `cloudfront:List/GetDistribution`, `cloudwatch:GetMetricData/ListMetrics`, `ec2:DescribeRegions`, `logs:Describe*`.
@@ -275,7 +278,13 @@ Migration 0001 is hand-written SQL (CHECKs, trigger, partial/GiST/GIN indexes). 
 ../backend/.venv/Scripts/python -m pip install -e ".[dev]"
 ../backend/.venv/Scripts/python -m pytest -q        # migrates sas_waf_test via backend Alembic
 ../backend/.venv/Scripts/ruff check .
-../backend/.venv/Scripts/cfn-lint ../infra/stacksets/cross-account-waf-roles.yaml
+../backend/.venv/Scripts/cfn-lint ../infra/stacksets/*.yaml ../infra/central_account/*.yaml
+../backend/.venv/Scripts/python build.py            # dist/<function>.zip with Linux wheels + the ASL
+```
+
+### Backend image
+```bash
+docker build -t sas-waf-backend:local backend      # API by default; TTL worker / alembic via command override
 ```
 
 ### Auth in local dev

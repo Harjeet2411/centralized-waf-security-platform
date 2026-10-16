@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote_plus
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,22 @@ class Settings(BaseSettings):
     sns_topic_arn: str = ""  # approval notifications; empty = disabled
     verify_wait_seconds: float = 2.0  # Rule #7: pause before re-reading AWS state
     ttl_expiring_window_minutes: int = 15
+
+    # ECS injects the RDS secret's username/password as separate env vars and cannot compose a URL; when
+    # SAS_DB_HOST is set, database_url is built from these parts (TLS required).
+    db_host: str = ""
+    db_port: int = 5432
+    db_name: str = "sas_waf"
+    db_user: str = ""
+    db_password: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def _compose_database_url(self) -> "Settings":
+        if self.db_host:
+            user, password = quote_plus(self.db_user), quote_plus(self.db_password.get_secret_value())
+            self.database_url = (f"postgresql+asyncpg://{user}:{password}@{self.db_host}:{self.db_port}/"
+                                 f"{self.db_name}?ssl=require")
+        return self
 
     @model_validator(mode="after")
     def _guard_insecure_settings(self) -> "Settings":
