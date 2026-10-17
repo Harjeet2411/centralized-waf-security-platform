@@ -1,4 +1,4 @@
-# Setup Guide — SAS WAF Security Platform
+# SAS WAF Security Platform — Setup Guide
 
 This guide gets the platform running on your machine. There are two ways to run it:
 
