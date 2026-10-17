@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SAS WAF Security Platform - self-hosted staging host. ONE EC2 instance runs everything (PostgreSQL, Redis, API,
+  sync worker, HTTPS console) with docker compose. Billable resources: the instance, its EBS volume and its public
+  IPv4 address. Everything else here (IAM role, security group, launch template) is free. Secrets come from SSM
+  Parameter Store standard parameters (free), never from user data.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the instance (the default VPC is fine).
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A PUBLIC subnet of that VPC (route to an internet gateway). No NAT gateway is used.
+  AdminCidr:
+    Type: String
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+    Description: >-
+      The only network that may open the console, e.g. 198.51.100.7/32 (your office or VPN egress IP).
+      Never 0.0.0.0/0: the console can approve WAF changes.
+  OrganizationId:
+    Type: String
+    AllowedPattern: '^o-[a-z0-9]{10,32}$'
+    Description: AWS Organizations ID (o-...). The host may only assume the SAS roles inside this organization.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large, t3a.small, t3a.medium, t3a.large]
+    Description: t3.medium (4 GB) is comfortable; t3.small (2 GB + 2 GB swap) works for a handful of accounts.
+  VolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    Description: Root EBS volume in GB (gp3, encrypted).
+  SiteAddress:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional DNS name for the console (e.g. waf-staging.example.com, pointing at the Elastic IP).
+      Empty = use the Elastic IP address.
+  CaddyTls:
+    Type: String
+    Default: internal
+    Description: >-
+      "internal" = Caddy's own certificate (browser warning until trusted). An email address = free Let's Encrypt
+      certificate; requires SiteAddress and AllowHttpFromAnywhere=true.
+  AllowHttpFromAnywhere:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Open port 80 to the internet (only needed for Let's Encrypt HTTP validation; 443 stays admin-only).
+  RepoUrl:
+    Type: String
+    Default: https://github.com/Harjeet2411/centralized-waf-security-platform.git
+  Branch:
+    Type: String
+    Default: staging
+  ParameterPrefix:
+    Type: String
+    Default: sas-waf-staging
+    Description: SSM Parameter Store path holding discovery-external-id, response-external-id and optional secrets.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  HasSiteAddress: !Not [!Equals [!Ref SiteAddress, ""]]
+  HttpFromAnywhere: !Equals [!Ref AllowHttpFromAnywhere, "true"]
+
+Resources:
+  HostRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SASStagingHostRole  # member-account StackSet: CollectorRoleName = ResponseExecutorRoleName = this
+      Description: Self-hosted SAS WAF staging host (sync worker + approval executor).
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"  # shell via Session Manager
+      Policies:
+        - PolicyName: sas-member-roles
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AssumeSasRolesInOrganization
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:TagSession, sts:SetSourceIdentity]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::*:role/SASWafDiscoveryRole"
+                  - !Sub "arn:${AWS::Partition}:iam::*:role/SASWafResponseRole"
+                Condition:
+                  StringEquals:
+                    aws:ResourceOrgID: !Ref OrganizationId
+        - PolicyName: sas-staging-parameters
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadOwnParameters
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ParameterPrefix}/*"
+              - Sid: DecryptSecureStrings
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+
+  HostInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref HostRole]
+
+  HostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SAS WAF staging console - HTTPS from the admin network only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref AdminCidr, Description: Console (admins)}
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !If [HttpFromAnywhere, 0.0.0.0/0, !Ref AdminCidr]
+          Description: HTTP redirect / Let's Encrypt validation
+
+  HostEni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref SubnetId
+      GroupSet: [!Ref HostSecurityGroup]
+      Description: SAS WAF staging host
+
+  HostEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  HostEipAssociation:  # attached before the instance boots, so the address is stable and the boot has internet
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt HostEip.AllocationId
+      NetworkInterfaceId: !Ref HostEni
+
+  HostLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required          # IMDSv2 only
+          HttpPutResponseHopLimit: 2    # containers on the docker bridge need one extra hop for instance creds
+
+  HostInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: HostEipAssociation
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref HostInstanceProfile
+      LaunchTemplate:
+        LaunchTemplateId: !Ref HostLaunchTemplate
+        Version: !GetAtt HostLaunchTemplate.LatestVersionNumber
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref HostEni
+          DeviceIndex: "0"
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: {VolumeSize: !Ref VolumeSize, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
+      Tags:
+        - {Key: Name, Value: sas-waf-staging}
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            # Bootstrap: Docker + Compose, 2 GB swap, clone the repo, write .env from SSM, start the stack.
+            set -euxo pipefail
+            exec > >(tee -a /var/log/sas-waf-bootstrap.log) 2>&1
+            dnf install -y docker git
+            systemctl enable --now docker
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            if [ ! -f /swapfile ]; then
+              fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+            fi
+            param() {
+              aws ssm get-parameter --region ${AWS::Region} --with-decryption --name "/${ParameterPrefix}/$1" \
+                --query Parameter.Value --output text 2>/dev/null || true
+            }
+            GH_TOKEN=$(param github-token)
+            if [ ! -d /opt/sas-waf ]; then
+              if [ -n "$GH_TOKEN" ]; then
+                AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+                git -c http.extraHeader="Authorization: Basic $AUTH" clone --branch ${Branch} ${RepoUrl} /opt/sas-waf
+              else
+                git clone --branch ${Branch} ${RepoUrl} /opt/sas-waf
+              fi
+            fi
+            cd /opt/sas-waf
+            umask 077
+            cat > .env <<ENV
+            COMPOSE_PROFILES=app
+            SITE_ADDRESS=${Site}
+            CADDY_TLS=${CaddyTls}
+            AWS_REGION=${AWS::Region}
+            POSTGRES_PASSWORD=$(openssl rand -hex 24)
+            DISCOVERY_EXTERNAL_ID=$(param discovery-external-id)
+            RESPONSE_EXTERNAL_ID=$(param response-external-id)
+            OPERATOR_LOGIN=true
+            OIDC_ISSUER=$(param oidc-issuer)
+            OIDC_CLIENT_ID=$(param oidc-client-id)
+            OIDC_CLIENT_SECRET=$(param oidc-client-secret)
+            TI_KEYS_JSON=$(param ti-keys-json)
+            ENV
+            docker compose up -d --build
+          - Site: !If [HasSiteAddress, !Ref SiteAddress, !Ref HostEip]
+
+Outputs:
+  ConsoleUrl:
+    Value: !Sub
+      - "https://${Site}"
+      - Site: !If [HasSiteAddress, !Ref SiteAddress, !Ref HostEip]
+  ElasticIp:
+    Value: !Ref HostEip
+  InstanceId:
+    Value: !Ref HostInstance
+  ConnectCommand:
+    Description: Shell on the host via Session Manager (no SSH key, no open port 22)
+    Value: !Sub "aws ssm start-session --target ${HostInstance} --region ${AWS::Region}"
+  HostRoleName:
+    Description: Use as CollectorRoleName and ResponseExecutorRoleName in the member-account StackSet
+    Value: !Ref HostRole

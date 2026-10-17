@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     verify_wait_seconds: float = 2.0  # Rule #7: pause before re-reading AWS state
     ttl_expiring_window_minutes: int = 15
     sync_state_machine_arn: str = ""  # /api/v1/refresh starts this Step Functions state machine
+    # "worker" = self-hosted staging: /api/v1/refresh queues the run on Redis list sync:requests for
+    # `python -m selfhosted_worker` (lambdas/) instead of starting Step Functions.
+    sync_backend: Literal["stepfunctions", "worker"] = "stepfunctions"
+
+    # Self-hosted staging only: sign in by entering the email of a provisioned, active user (no IdP). Use it only
+    # when the console is reachable by administrators alone (security group / VPN). Refused in production.
+    operator_login: bool = False
 
     # ECS injects the RDS secret's username/password as separate env vars and cannot compose a URL; when
     # SAS_DB_HOST is set, database_url is built from these parts (TLS required).
@@ -58,6 +65,8 @@ class Settings(BaseSettings):
         deployed = self.environment in ("staging", "production")
         if deployed and not self.cookie_secure:
             raise ValueError("SAS_COOKIE_SECURE=false is only allowed in local/test environments")
+        if self.environment == "production" and self.operator_login:
+            raise ValueError("SAS_OPERATOR_LOGIN is not allowed in production")
         if deployed and not self.oidc_require_mfa:
             raise ValueError("SAS_OIDC_REQUIRE_MFA=false is only allowed in local/test environments")
         return self

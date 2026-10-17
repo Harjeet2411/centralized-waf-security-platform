@@ -64,8 +64,8 @@ Numbering matches `WAF_PLATFORM_SPEC.md` §15 — refer to them by number in cod
 ├── backend/                  # FastAPI control plane            (Milestone 1)
 ├── lambdas/                  # serverless pipeline              (Milestones 2–3)
 ├── infra/                    # StackSets + central account IaC  (Milestone 2)
-├── README.md                 # setup guide: deploy into an AWS Organization
-└── docker-compose.yml        # dev/test dependencies only (postgres 5433, redis 6379)
+├── README.md                 # staging branch: self-hosted single-EC2 setup guide (dev branch: AWS-native guide)
+└── docker-compose.yml        # staging: whole platform on one host (profile `app`); without .env only postgres+redis
 ```
 
 ### `WAF_PLATFORM/` — actual versions from `package.json`
@@ -102,6 +102,18 @@ Pipeline facts that are easy to get wrong:
 - First-seen WebACL JSON becomes `web_acls.baseline_config`; after that only an approved change may move the baseline.
 - JA3/JA4 are native in full logs. In `GetSampledRequests` they exist only if injected upstream (CloudFront `CloudFront-Viewer-JA4-Fingerprint` header via viewer-request function / `x-ja4` header / `sas:ja4:<hash>` label) — otherwise `NULL`. Never fabricate.
 - Removed WebACLs are not deleted (cascade would erase `waf_events` history). ponytail: add `web_acls.deleted_at` when the drift engine needs it.
+
+### Branches
+- `dev` — AWS-native deployment (RDS, Lambda, Step Functions, ECS, CloudFront); README = AWS Organization guide.
+- `staging` — self-hosted on ONE EC2 instance (≈ $21–36/month, instance + EBS + IPv4 only): `infra/staging/host.yaml`
+  (EC2 + Elastic IP + admin-only security group + `SASStagingHostRole`, secrets from SSM Parameter Store),
+  `docker-compose.yml` profile `app` (postgres, redis, migrate, api, worker, ttl-expiry, web=Caddy HTTPS).
+  `lambdas/selfhosted_worker` runs the same handlers as the Step Functions machine (same order, retry policy and
+  degraded marking) on the EventBridge schedule, plus manual refreshes from Redis list `sync:requests`
+  (`SAS_SYNC_BACKEND=worker`). Optional operator sign-in (`SAS_OPERATOR_LOGIN`, refused in production): enter the
+  email of a provisioned user; audited as `OPERATOR_LOGIN`; safe only behind the admin-only security group. The
+  StackSet's `CollectorRoleName`/`ResponseExecutorRoleName` parameters point member roles at `SASStagingHostRole`.
+  No S3 full-log ingestion on staging (all accounts SAMPLED).
 
 ### `infra/` (see `infra/README.md` for deploy order and the cost table)
 - `stacksets/cross-account-waf-roles.yaml` — `SASWafDiscoveryRole` + `SASWafResponseRole` (CloudFormation StackSet, `SERVICE_MANAGED`).
@@ -260,9 +272,10 @@ npx tsc -b           # type-check only
 
 ### Dev/test dependencies (repo root)
 ```bash
-docker compose up -d --wait postgres redis   # Postgres 16 on host port 5433, Redis 7 on 6379
+docker compose up -d --wait postgres redis   # Postgres 16 on 127.0.0.1:5433, Redis 7 on 127.0.0.1:6379
+docker compose up -d --build                 # staging: whole stack (needs .env with COMPOSE_PROFILES=app)
 ```
-Creates `sas_waf` (dev) and `sas_waf_test` (pytest; migrated down/up on every test session). There is no demo dataset and no demo sign-in: the platform only shows data synced from real member accounts. Deployment into an AWS Organization is the step-by-step guide in `README.md` (infra details in `infra/README.md`).
+Creates `sas_waf` and `sas_waf_test` (pytest; migrated down/up on every test session). There is no demo dataset: the platform only shows data synced from real member accounts. `POSTGRES_PASSWORD` applies only when the volume is first created.
 
 ### Backend (`backend/`) — Python 3.12 venv
 ```bash

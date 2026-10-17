@@ -5,6 +5,15 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Self-Hosted Staging (branch `staging`)
+### Added
+- `infra/staging/host.yaml`: one EC2 instance (IMDSv2, hop limit 2), Elastic IP, security group open only to `AdminCidr`, instance role `SASStagingHostRole` (may assume the SAS roles only inside the given organization; reads `/sas-waf-staging/*` SSM parameters), Session Manager access, bootstrap that installs Docker, clones the branch, writes `.env` from Parameter Store and starts the stack.
+- `docker-compose.yml` profile `app`: postgres, redis, migrate, api, `worker`, `ttl-expiry`, `web` (Caddy: HTTPS with its own CA or Let's Encrypt, SPA, `/api` + `/ws` proxy). Postgres/Redis bound to loopback.
+- `lambdas/selfhosted_worker`: the Step Functions sync in one process (fetch accounts, 20 parallel collectors with the ASL throttling retry, degraded marking, TI, detections, drift/scoring), telemetry every 30 min and full discovery every 6 h, manual refresh via Redis list `sync:requests`. Tests in `lambdas/tests/test_selfhosted_worker.py`.
+- Backend: `SAS_SYNC_BACKEND=worker` (refresh queues the run), optional operator sign-in (`SAS_OPERATOR_LOGIN`, `GET /api/v1/auth/config`, `POST /api/v1/auth/operator-login`; refused in production; audited). Tests in `tests/test_selfhosted.py`. Console sign-in page offers SSO and/or operator sign-in.
+- StackSet parameters `CollectorRoleName` / `ResponseExecutorRoleName` (defaults unchanged) so member roles can trust the staging host role.
+- README on `staging`: single-instance setup guide with cost table, operations, security notes and troubleshooting.
+
 ## [Unreleased] - Real AWS Organization Setup (demo removed)
 ### Changed
 - `README.md` is now a step-by-step guide to deploy the platform into an AWS Organization: OIDC sign-in, certificates, Lambda build, platform stack, cross-account StackSet roles (pilot OU first), backend image, application stack, schema + first admin, console publish, account registration, controlled-response prerequisites, full-log replication, organization rollout, updates and troubleshooting.

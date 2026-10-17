@@ -1,0 +1,24 @@
+# SITE_ADDRESS: public IP or DNS name. CADDY_TLS: "internal" (Caddy's own CA) or an email for Let's Encrypt.
+{$SITE_ADDRESS} {
+	tls {$CADDY_TLS}
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /ws/* {
+		reverse_proxy api:8000
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

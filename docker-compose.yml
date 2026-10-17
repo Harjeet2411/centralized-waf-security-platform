@@ -1,14 +1,26 @@
-# Development and test dependencies only. The platform itself runs in your AWS account (see README.md):
-# RDS PostgreSQL 16 + ElastiCache Redis 7 + ECS Fargate + Lambdas, deployed from infra/central_account.
+# Self-hosted staging: the whole platform on ONE instance (see README.md). No RDS, ElastiCache, Lambda, Step
+# Functions, NAT, ALB or CloudFront: PostgreSQL, Redis, the API, the sync worker and the HTTPS console all run here.
+#
+#   cp .env.example .env   # then fill it in
+#   docker compose up -d --build
+#
+# Developers can still start only the test dependencies:  docker compose up -d --wait postgres redis
+x-backend-env: &backend-env
+  SAS_ENVIRONMENT: staging
+  SAS_DATABASE_URL: postgresql+asyncpg://sas:${POSTGRES_PASSWORD:-sas_local_dev}@postgres:5432/sas_waf
+  SAS_REDIS_URL: redis://redis:6379/0
+  SAS_AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: sas
-      POSTGRES_PASSWORD: sas_local_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sas_local_dev}
       POSTGRES_DB: sas_waf
     ports:
-      - "5433:5432"  # host 5433: a native PostgreSQL may already own 5432
+      - "127.0.0.1:5433:5432"  # loopback only; tests on a dev machine use it, nothing outside the host can
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql:ro
@@ -16,15 +28,93 @@ services:
       test: ["CMD-SHELL", "pg_isready -U sas -d sas_waf"]
       interval: 2s
       retries: 30
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build: ./backend
+    environment: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    profiles: ["app"]
+
+  api:
+    build: ./backend
+    environment:
+      <<: *backend-env
+      SAS_FRONTEND_URL: https://${SITE_ADDRESS:-localhost}
+      SAS_CORS_ORIGINS: '["https://${SITE_ADDRESS:-localhost}"]'
+      SAS_COOKIE_SECURE: "true"
+      SAS_SYNC_BACKEND: worker
+      SAS_OPERATOR_LOGIN: ${OPERATOR_LOGIN:-true}
+      SAS_RESPONSE_EXTERNAL_ID: ${RESPONSE_EXTERNAL_ID:-}
+      SAS_OIDC_ISSUER: ${OIDC_ISSUER:-}
+      SAS_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      SAS_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      SAS_OIDC_REDIRECT_URI: https://${SITE_ADDRESS:-localhost}/api/v1/auth/callback
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      retries: 20
+    restart: unless-stopped
+    profiles: ["app"]
+
+  ttl-expiry:  # temporary IP blocks expire on time (was an ECS scheduled task)
+    build: ./backend
+    environment:
+      <<: *backend-env
+      SAS_RESPONSE_EXTERNAL_ID: ${RESPONSE_EXTERNAL_ID:-}
+    command: ["sh", "-c", "while true; do python -m app.workers.ttl_expiry; sleep 300; done"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    profiles: ["app"]
+
+  worker:  # the sync pipeline (was Lambda + Step Functions + EventBridge)
+    build: ./lambdas
+    environment:
+      SAS_LAMBDA_DATABASE_URL: postgresql://sas:${POSTGRES_PASSWORD:-sas_local_dev}@postgres:5432/sas_waf
+      SAS_REDIS_URL: redis://redis:6379/0
+      SAS_DISCOVERY_EXTERNAL_ID: ${DISCOVERY_EXTERNAL_ID:-}
+      SAS_TI_KEYS_JSON: ${TI_KEYS_JSON:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    profiles: ["app"]
+
+  web:  # HTTPS console + reverse proxy (was S3 + CloudFront + ALB)
+    build: ./WAF_PLATFORM
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddydata:/data
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    profiles: ["app"]
 
 volumes:
   pgdata:
+  redisdata:
+  caddydata:

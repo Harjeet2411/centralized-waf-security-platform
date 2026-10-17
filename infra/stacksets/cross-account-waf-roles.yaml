@@ -19,6 +19,20 @@ Parameters:
     NoEcho: true
     MinLength: 32
     Description: sts:ExternalId required by SASWafResponseRole. Must differ from DiscoveryExternalId.
+  CollectorRoleName:
+    Type: String
+    Default: SASLambdaCollectorExecutionRole
+    AllowedPattern: '^[\w+=,.@-]{1,64}$'
+    Description: >-
+      Central-account role allowed to assume SASWafDiscoveryRole. Keep the default for the AWS deployment;
+      self-hosted staging uses SASStagingHostRole (infra/staging/host.yaml).
+  ResponseExecutorRoleName:
+    Type: String
+    Default: SASFastAPIResponseExecutorRole
+    AllowedPattern: '^[\w+=,.@-]{1,64}$'
+    Description: >-
+      Central-account role allowed to assume SASWafResponseRole. Keep the default for the AWS deployment;
+      self-hosted staging uses SASStagingHostRole.
 
 Resources:
   SASWafDiscoveryRole:
@@ -33,7 +47,7 @@ Resources:
           - Sid: CentralCollectorOnly
             Effect: Allow
             Principal:
-              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/SASLambdaCollectorExecutionRole"
+              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/${CollectorRoleName}"
             Action: sts:AssumeRole
             Condition:
               StringEquals:
@@ -102,7 +116,7 @@ Resources:
           - Sid: ApprovalExecutorOnly
             Effect: Allow
             Principal:
-              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/SASFastAPIResponseExecutorRole"
+              AWS: !Sub "arn:${AWS::Partition}:iam::${CentralAccountId}:role/${ResponseExecutorRoleName}"
             Action:
               - sts:AssumeRole
               - sts:TagSession

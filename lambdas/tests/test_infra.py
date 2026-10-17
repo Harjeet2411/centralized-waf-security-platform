@@ -33,7 +33,8 @@ def test_discovery_role_is_read_only():
 def test_discovery_trust_requires_external_id_from_central_collector():
     [trust] = TEMPLATE["Resources"]["SASWafDiscoveryRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"]
     assert "sts:ExternalId" in trust["Condition"]["StringEquals"]
-    assert "SASLambdaCollectorExecutionRole" in str(trust["Principal"]["AWS"])
+    assert "${CollectorRoleName}" in str(trust["Principal"]["AWS"])
+    assert TEMPLATE["Parameters"]["CollectorRoleName"]["Default"] == "SASLambdaCollectorExecutionRole"
 
 
 def test_response_role_denies_destructive_actions():
@@ -47,7 +48,8 @@ def test_response_role_denies_destructive_actions():
 
 def test_response_trust_binds_session_to_approval_and_approver():
     [trust] = TEMPLATE["Resources"]["SASWafResponseRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"]
-    assert "SASFastAPIResponseExecutorRole" in str(trust["Principal"]["AWS"])
+    assert "${ResponseExecutorRoleName}" in str(trust["Principal"]["AWS"])
+    assert TEMPLATE["Parameters"]["ResponseExecutorRoleName"]["Default"] == "SASFastAPIResponseExecutorRole"
     cond = trust["Condition"]
     assert "sts:ExternalId" in cond["StringEquals"]
     assert cond["StringLike"]["aws:RequestTag/sas:approval-id"] == "APR-*"

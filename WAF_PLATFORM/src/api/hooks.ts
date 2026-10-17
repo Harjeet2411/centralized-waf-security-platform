@@ -15,6 +15,15 @@ export function useGet<T>(path: string | null, key: unknown[] = [path]) {
   return useQuery({ queryKey: key, queryFn: () => api<T>(path!), enabled: Boolean(path) });
 }
 
+export interface AuthConfig {
+  oidc_enabled: boolean;
+  operator_login: boolean; // self-hosted staging only; the backend refuses it in production
+}
+
+export function useAuthConfig() {
+  return useQuery({ queryKey: ['auth-config'], queryFn: () => api<AuthConfig>('/api/v1/auth/config'), staleTime: Infinity });
+}
+
 export function useBootstrap(enabled: boolean) {
   const hydrate = useAppStore(s => s.hydrate);
   const query = useQuery({ queryKey: ['bootstrap'], queryFn: () => api<Bootstrap>('/api/v1/bootstrap'), enabled });

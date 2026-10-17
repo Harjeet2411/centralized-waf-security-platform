@@ -2,6 +2,8 @@
 
 Users are never auto-provisioned: the token's `sub` must match an active `users.sso_subject_id`.
 MFA is required via the `amr` claim unless SAS_OIDC_REQUIRE_MFA=false (local/test only, see config).
+Self-hosted staging may instead enable operator sign-in (SAS_OPERATOR_LOGIN, refused in production): an admin-only
+console where a person signs in by entering the email of a provisioned, active user.
 """
 
 import asyncio
@@ -16,14 +18,16 @@ import httpx
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db, get_redis
 from app.models import User
 from app.security import create_session, destroy_session
+from app.services import audit_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -129,3 +133,35 @@ async def logout(request: Request, redis: Redis = Depends(get_redis)) -> Respons
     await destroy_session(redis, request, response)
     return response
 
+
+
+@router.get("/config")
+async def auth_config() -> dict:
+    """Public: which sign-in methods the sign-in page should offer (no secrets)."""
+    settings = get_settings()
+    return {"oidc_enabled": bool(settings.oidc_issuer), "operator_login": settings.operator_login}
+
+
+class OperatorLogin(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=255)
+
+
+@router.post("/operator-login", status_code=status.HTTP_204_NO_CONTENT)
+async def operator_login(body: OperatorLogin, db: AsyncSession = Depends(get_db),
+                         redis: Redis = Depends(get_redis)) -> Response:
+    settings = get_settings()
+    if not settings.operator_login or settings.environment == "production":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    user = await db.scalar(select(User).where(func.lower(User.email) == body.email.strip().lower()))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No active user with that email")
+    user.last_login_at = datetime.now(UTC)
+    audit_service.record(db, actor_email=user.email, actor_role=user.role.name, account_id="GLOBAL", region="global",
+                         action="OPERATOR_LOGIN", target_resource=user.email,
+                         reason="Operator sign-in (self-hosted, admin-only network)", risk_level="MEDIUM",
+                         execution_status="EXECUTED")
+    await db.commit()
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Treated as MFA-equivalent so approvals work: access is restricted to admins at the network layer.
+    await create_session(redis, response, user, mfa=True)
+    return response

@@ -23,7 +23,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["common*", "account_collector*", "fetch_accounts*", "mark_account_degraded*", "s3_log_ingestor*",
-           "drift_scoring_engine*", "detection_campaign_engine*", "ti_enrichment_worker*"]
+           "drift_scoring_engine*", "detection_campaign_engine*", "ti_enrichment_worker*", "selfhosted_worker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
