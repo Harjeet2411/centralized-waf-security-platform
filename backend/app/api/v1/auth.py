@@ -2,6 +2,7 @@
 
 Users are never auto-provisioned: the token's `sub` must match an active `users.sso_subject_id`.
 MFA is required via the `amr` claim unless SAS_OIDC_REQUIRE_MFA=false (local/test only, see config).
+The demo sign-in exists only when SAS_DEMO_LOGIN_EMAIL is set, which config refuses outside local/test.
 """
 
 import asyncio
@@ -127,4 +128,31 @@ async def callback(
 async def logout(request: Request, redis: Redis = Depends(get_redis)) -> Response:
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     await destroy_session(redis, request, response)
+    return response
+
+
+@router.get("/config")
+async def auth_config() -> dict:
+    """Public: tells the sign-in page which login methods exist (no secrets)."""
+    settings = get_settings()
+    return {
+        "environment": settings.environment,
+        "oidc_enabled": bool(settings.oidc_issuer),
+        "demo_login_enabled": bool(settings.demo_login_email),
+    }
+
+
+@router.post("/demo-login", status_code=status.HTTP_204_NO_CONTENT)
+async def demo_login(db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)) -> Response:
+    settings = get_settings()
+    if not settings.demo_login_email or settings.environment not in ("local", "test"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    user = await db.scalar(select(User).where(User.email == settings.demo_login_email))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Demo user not provisioned; run `python -m app.cli seed-demo`")
+    user.last_login_at = datetime.now(UTC)
+    await db.commit()
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Local demo stands in for the IdP's MFA so the approval workflow can be explored without an IdP.
+    await create_session(redis, response, user, mfa=True)
     return response

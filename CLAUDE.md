@@ -63,18 +63,20 @@ Numbering matches `WAF_PLATFORM_SPEC.md` §15 — refer to them by number in cod
 ├── WAF_PLATFORM/             # existing frontend (the docs call it "frontend/" — same thing, keep this name)
 ├── backend/                  # FastAPI control plane            (Milestone 1)
 ├── lambdas/                  # serverless pipeline              (Milestones 2–3)
-└── infra/                    # StackSets + central account IaC  (Milestone 2)
+├── infra/                    # StackSets + central account IaC  (Milestone 2)
+└── docker-compose.yml        # whole platform locally (postgres, redis, migrate, seed, api, web) -> http://localhost:8088
 ```
 
 ### `WAF_PLATFORM/` — actual versions from `package.json`
-Vite 8, React 19.2, TypeScript 6, Tailwind CSS 4 (`@tailwindcss/postcss`), Zustand 5, TanStack React Query 5 (installed, not yet used), D3 7, date-fns 4, lucide-react, react-router-dom 7 (installed, navigation currently uses `currentPage` in the store). Path alias `@/` → `src/`. Dev server port **5000**.
+Vite 8, React 19.2, TypeScript 6, **Cloudscape Design System** (`@cloudscape-design/components`, `global-styles`, `collection-hooks`, `design-tokens` — AWS's open-source console design system), Zustand 5, TanStack React Query 5, react-router-dom 7 (`BrowserRouter`). Path alias `@/` → `src/`. Dev server port **5000**. Tailwind, D3, lucide-react and date-fns were removed with the old UI.
 
 - `src/types/index.ts` — **the wire contract** (see §8).
-- `src/store.ts` — Zustand store exported as **`useAppStore`**: UI state + the hydrated bootstrap snapshot + actions `triggerRefresh`, `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest` (all through the backend lifecycle).
-- `src/data/mockData.ts` — **deleted** (Milestone 5). Data comes only from `GET /api/v1/bootstrap` (hydrated into the store by `AuthGate`) and the on-demand hooks in `src/api/hooks.ts`; live updates via `/ws/events`. Never reintroduce fixtures or `Math.random` into `src/`.
-- Toolchain: Vite 8 needs Node ≥ 20.19 (`npx -y -p node@20.20.2 node node_modules/vite/bin/vite.js build` works without upgrading). The lockfile was generated on another OS; on Windows add rolldown's native binding with `npm install --no-save @rolldown/binding-win32-x64-msvc@<rolldown version>` after `npm ci`. Type-check: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`.
-- `src/components/` — `commandCenter`, `threat-intelligence`, `entities` (+ `EntityDetailPanel`), `waf-security`, `investigation` (+ `CampaignDetail`), `detection`, `simulation`, `response`, `governance`, `cost`, `reports`, `layout` (`Sidebar`, `TopBar`, `ContextBar`), `common` (`Drawer`).
-- `src/index.css` — design tokens as CSS variables (`--color-bg-primary`, `--color-critical`, …). **These are the real tokens**; `docs/DESIGN_LANGUAGE.md` hex values are approximations of them.
+- `src/store.ts` — Zustand store **`useAppStore`**: the hydrated bootstrap snapshot + actions `triggerRefresh`, `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest` (all through the backend lifecycle). Zustand selectors must not return new arrays (`s => s.x.filter(...)` loops forever, React #185): select, then filter.
+- Data comes only from `GET /api/v1/bootstrap` (hydrated by `src/AuthGate.tsx`) and on-demand hooks in `src/api/hooks.ts` (`useGet` for changes, allow-list, audit, users…); live updates via `/ws/events`. Never reintroduce fixtures or `Math.random` into `src/`.
+- `src/App.tsx` — console shell: `TopNavigation` (global search, data-freshness refresh, approvals bell, user menu, "Local demo" badge), `SideNavigation`, breadcrumbs, `Flashbar`, bottom `SplitPanel`; routes lazy-load `src/pages/*`.
+- `src/pages/` — `Dashboard` (home), `Threats` (detections, campaigns, entities + detail), `Inventory` (accounts + registration, Web ACLs + detail, endpoints + attach, drift + remediate), `Response` (simulate, approvals + detail/decide, changes & active blocks + rollback, allow list), `Governance` (audit + CSV, users, platform health).
+- `src/ui.tsx` — shared pieces: `Status` (one value→StatusIndicator map), `ResourceTable` (filter/sort/paginate via collection-hooks), `ApprovalModal` (**every AWS-mutating action ends in an approval request**), `useCan` (UI hint; the API enforces RBAC), `notify`, `useSplit`.
+- Toolchain: Node ≥ 20.19. On Windows after `npm ci`, if rolldown's binding is missing: `npm install --no-save @rolldown/binding-win32-x64-msvc@<rolldown version>`.
 
 ### `backend/`
 Python 3.12, FastAPI 0.115+, Uvicorn (Gunicorn workers in prod), SQLAlchemy 2.0 async (`AsyncSession` + `asyncpg`), Alembic, Pydantic v2 (strict), `redis.asyncio`, `boto3`, pytest.
@@ -165,14 +167,14 @@ Each `d_i ∈ [0,100]`, weights sum to 1.0 (weights configurable, defaults above
 
 ---
 
-## 7. UI Rules (from `docs/DESIGN_LANGUAGE.md`)
+## 7. UI Rules (AWS console style, Cloudscape)
 
-- Tactical dark mode, high density, color reserved for severity / WAF action / visibility. Use the CSS variables in `src/index.css`.
-- **Monospace + `tabular-nums`** for IPs, CIDRs, ASNs, JA3/JA4, account IDs, ARNs, URIs, ISO timestamps and all numeric columns.
-- **Visibility Pill on every telemetry card and WebACL row:** `FULL LOGS` (emerald), `SAMPLED` (purple, tooltip: *"Request payloads are sampled via AWS GetSampledRequests; aggregate block/allow counts are exact via CloudWatch Metrics."*), `METRICS ONLY` (amber), `UNAVAILABLE` (red).
-- Clicking an IP/ASN/JA4/WebACL opens the right-hand `Drawer` — never a full-page navigation. "Open Full Investigation" adds a workspace tab in `ContextBar`.
-- D3 graph: IP = circle colored by risk; JA4 = purple hexagon/diamond; ASN/Org = blue rounded rect; App/Endpoint = emerald square (red dashed ring if unprotected or malicious-allowed). Edges: solid red = malicious allowed, dashed slate = blocked, purple pulse = JA4 correlation.
-- Approval stepper: completed = emerald, active = pulsing blue, guardrail-blocked = red.
+- Build with Cloudscape components only (no custom CSS frameworks): `ContentLayout` + `Header` per page, `Container`/`ColumnLayout` for summaries, `ResourceTable` for lists, `KeyValuePairs` for details, `Tabs` for detail sections, `Modal` + `Form`/`FormField` with constraint/error text for inputs.
+- Color only through `Status` (severity, WAF action, protection, visibility, lifecycle). Chart colors use design-token status colors.
+- Every list row links to its detail page; detail pages deep-link into the simulator (`/response/simulate?type=…&targets=…|ja4=…|webacl=…&rule=…&action=…`).
+- **Never claim sampled = complete:** sampled-visibility accounts/Web ACLs show an info alert that counts are lower bounds.
+- Every AWS change is: simulate → `ApprovalModal` (justification ≥ 10 chars) → approvers → execute/verify; the UI never calls AWS and never offers a direct-change button.
+- Lifecycle uses `Steps`: completed = success, active = in-progress, guardrail-blocked/failed = error, skipped = stopped.
 
 ---
 
@@ -255,11 +257,13 @@ npm run build        # tsc -b && vite build — must pass with zero TS errors
 npx tsc -b           # type-check only
 ```
 
-### Local dependencies (repo root)
+### Whole platform (repo root)
 ```bash
-docker compose up -d --wait   # Postgres 16 on host port 5433 (5432 is taken by a native install), Redis 7 on 6379
+docker compose up -d --build   # postgres, redis, migrate, seed (demo data), api, web -> http://localhost:8088
+docker compose up -d --wait postgres redis   # only the test/dev dependencies
+docker compose down -v         # stop and wipe data (seed reloads on next up)
 ```
-Creates databases `sas_waf` (dev) and `sas_waf_test` (pytest; migrated down/up on every test session).
+Postgres 16 on host port 5433 (5432 is taken by a native install), Redis 7 on 6379. Creates `sas_waf` (dev/demo) and `sas_waf_test` (pytest; migrated down/up on every test session). `web` is nginx serving the built SPA and proxying `/api` + `/ws` to `api` (same origin, so the SameSite=Strict cookie works). `seed` runs `python -m app.cli seed-demo` and skips when any account exists.
 
 ### Backend (`backend/`) — Python 3.12 venv
 ```bash
@@ -289,7 +293,9 @@ docker build -t sas-waf-backend:local backend      # API by default; TTL worker 
 ```
 
 ### Auth in local dev
-Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned by `sso_subject_id` — first admin via `python -m app.cli create-admin`, everyone else via `/api/v1/governance/users` (`app/services/registry_service.py`). Privilege changes revoke the user's sessions through the `session:index:{user_id}` set. There is deliberately **no** dev-login bypass. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
+Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned by `sso_subject_id` — first admin via `python -m app.cli create-admin`, everyone else via `/api/v1/governance/users` (`app/services/registry_service.py`). Privilege changes revoke the user's sessions through the `session:index:{user_id}` set. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
+
+**Local demo sign-in** (docker compose only): `SAS_DEMO_LOGIN_EMAIL=admin@sas.local` enables `POST /api/v1/auth/demo-login`, which signs in as that pre-seeded user (session marked MFA so approvals can be explored). `Settings` refuses `SAS_DEMO_LOGIN_EMAIL` in staging/production and the route 404s unless the environment is local/test. `GET /api/v1/auth/config` tells the sign-in page which methods exist. Demo users: `admin@`, `analyst@`, `soc.analyst@`, `auditor@sas.local`. With no AWS credentials, approving a change shows the audited AWS-failure path.
 
 ---
 

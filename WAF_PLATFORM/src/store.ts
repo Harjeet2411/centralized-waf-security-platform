@@ -1,20 +1,9 @@
 import { create } from 'zustand';
 import { api, queryClient } from '@/api/client';
 import type {
-  Page, AWSAccount, Endpoint, WebACL, WafRule, Entity, Campaign, Detection, DriftEvent, Approval,
-  PostureDimension, PlatformHealth, ApprovalStatus, Bootstrap, ThreatActivity, SyncStatus,
+  AWSAccount, Endpoint, WebACL, WafRule, Entity, Campaign, Detection, DriftEvent, Approval,
+  PostureDimension, PlatformHealth, Bootstrap, ThreatActivity, SyncStatus,
 } from '@/types';
-
-export interface WorkspaceTab {
-  id: string;
-  title: string;
-  type: 'entity' | 'campaign' | 'application' | 'webacl' | 'rule' | 'investigation';
-  data: any;
-  active: boolean;
-}
-
-export type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
-export type ApprovalFilter = 'all' | ApprovalStatus;
 
 export interface ApprovalRequestBody {
   action_type: 'TEMP_BLOCK_IP' | 'PERM_BLOCK_IP' | 'REMOVE_BLOCK' | 'MODIFY_RULE' | 'ADD_EXCEPTION'
@@ -44,34 +33,6 @@ const EMPTY_HEALTH: PlatformHealth = {
 };
 
 interface AppState {
-  // Navigation
-  currentPage: Page;
-  setPage: (page: Page) => void;
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
-  globalSearch: string;
-  setGlobalSearch: (q: string) => void;
-
-  // Drawer + workspace tabs + breadcrumb
-  selectedEntity: Entity | null;
-  setSelectedEntity: (e: Entity | null) => void;
-  drawerOpen: boolean;
-  drawerContent: 'entity' | 'campaign' | 'approval' | 'drift' | 'webacl' | 'rule';
-  drawerData: any;
-  openDrawer: (content: AppState['drawerContent'], data: any) => void;
-  closeDrawer: () => void;
-  workspaceTabs: WorkspaceTab[];
-  activeWorkspaceTab: string | null;
-  openWorkspaceTab: (tab: Omit<WorkspaceTab, 'active'>) => void;
-  closeWorkspaceTab: (id: string) => void;
-  setActiveWorkspaceTab: (id: string) => void;
-  contextPath: { label: string; page?: Page; entityId?: string }[];
-  pushContext: (item: { label: string; page?: Page; entityId?: string }) => void;
-  popContext: () => void;
-  resetContext: () => void;
-  severityFilter: SeverityFilter;
-  setSeverityFilter: (f: SeverityFilter) => void;
-
   // Live platform data (GET /api/v1/bootstrap) — never mock data (CLAUDE.md constraint #4)
   hydrated: boolean;
   hydrate: (b: Bootstrap) => void;
@@ -120,48 +81,6 @@ export const useAppStore = create<AppState>((set, get) => {
   }
 
   return {
-    currentPage: 'command-center',
-    setPage: (page) => set({ currentPage: page }),
-    sidebarCollapsed: false,
-    toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-    globalSearch: '',
-    setGlobalSearch: (q) => set({ globalSearch: q }),
-
-    selectedEntity: null,
-    setSelectedEntity: (e) => set({ selectedEntity: e }),
-    drawerOpen: false,
-    drawerContent: 'entity',
-    drawerData: null,
-    openDrawer: (content, data) => set({ drawerOpen: true, drawerContent: content, drawerData: data }),
-    closeDrawer: () => set({ drawerOpen: false }),
-    workspaceTabs: [],
-    activeWorkspaceTab: null,
-    openWorkspaceTab: (tab) => set(s => {
-      const exists = s.workspaceTabs.find(t => t.id === tab.id);
-      if (exists) {
-        return { workspaceTabs: s.workspaceTabs.map(t => ({ ...t, active: t.id === tab.id })), activeWorkspaceTab: tab.id };
-      }
-      return {
-        workspaceTabs: [...s.workspaceTabs.map(t => ({ ...t, active: false })), { ...tab, active: true }],
-        activeWorkspaceTab: tab.id,
-      };
-    }),
-    closeWorkspaceTab: (id) => set(s => {
-      const filtered = s.workspaceTabs.filter(t => t.id !== id);
-      const newActive = s.activeWorkspaceTab === id ? (filtered[filtered.length - 1]?.id || null) : s.activeWorkspaceTab;
-      return { workspaceTabs: filtered.map(t => ({ ...t, active: t.id === newActive })), activeWorkspaceTab: newActive };
-    }),
-    setActiveWorkspaceTab: (id) => set(s => ({
-      workspaceTabs: s.workspaceTabs.map(t => ({ ...t, active: t.id === id })),
-      activeWorkspaceTab: id,
-    })),
-    contextPath: [{ label: 'GLOBAL' }],
-    pushContext: (item) => set(s => ({ contextPath: [...s.contextPath, item] })),
-    popContext: () => set(s => ({ contextPath: s.contextPath.slice(0, -1) })),
-    resetContext: () => set({ contextPath: [{ label: 'GLOBAL' }] }),
-    severityFilter: 'all',
-    setSeverityFilter: (f) => set({ severityFilter: f }),
-
     hydrated: false,
     hydrate: (b) => set({
       hydrated: true,

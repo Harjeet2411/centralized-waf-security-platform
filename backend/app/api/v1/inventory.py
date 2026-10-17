@@ -76,7 +76,8 @@ async def list_endpoints(
         query = query.where(Endpoint.internet_facing == internet_facing)
     return [
         c.EndpointOut(
-            id=str(ep.id), account_id=ep.account_id, account_name=account_name, name=ep.name,
+            id=str(ep.id), resource_arn=ep.resource_arn, account_id=ep.account_id, account_name=account_name,
+            name=ep.name,
             type=c.ENDPOINT_TYPE[ep.type], dns_name=ep.dns_name, internet_facing=ep.internet_facing,
             waf_enabled=ep.webacl_id is not None, waf_arn=arn, logging_enabled=ep.logging_enabled,
             status=ep.waf_status.lower(), region=ep.region, visibility_level=ep.visibility_level,

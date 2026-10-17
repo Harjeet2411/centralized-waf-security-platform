@@ -5,6 +5,16 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - AWS-Console UI & One-Command Local Stack
+### Added
+- Root `docker-compose.yml` runs the whole platform: postgres, redis, `migrate` (alembic), `seed` (`python -m app.cli seed-demo`), `api`, `web` (nginx serving the built SPA and proxying `/api` + `/ws`) at http://localhost:8088. `WAF_PLATFORM/Dockerfile` + `nginx.conf`.
+- Guarded local demo sign-in: `SAS_DEMO_LOGIN_EMAIL` enables `POST /api/v1/auth/demo-login`; config refuses it in staging/production and the route 404s outside local/test. `GET /api/v1/auth/config` reports the available sign-in methods.
+- `seed-demo` CLI + `app/demo_seed.sql`: four demo users (one per main role) and a synthetic three-account dataset (Web ACLs, rules, endpoints incl. unprotected ones, entities, TI, a JA4 campaign, detections, drift, pending approvals, allow list, platform health and raw `waf_events` for the simulator). Skips when any account exists. Tests in `tests/test_demo.py`.
+- Bootstrap `Endpoint.resource_arn` (contract field) so the console can request ATTACH_WAF.
+- Frontend rebuilt on the Cloudscape Design System (AWS console look): top navigation with global search, refresh/freshness, approvals bell and user menu; side navigation with live counters; breadcrumbs; flash notifications; split panel. Pages: Security overview (home), Detections, Campaigns (+ detail), Entities (+ detail with timeline, why-allowed, relationships, raw requests), Accounts (+ register), Web ACLs (+ detail: rules, score breakdown, false-positive candidates, drift), Endpoints (+ attach Web ACL), Configuration drift (+ remediate), Simulate a change, Approvals (+ detail with lifecycle steps, decide), Changes & active blocks (+ rollback), Allow list (+ add/deactivate), Audit trail (+ filters, CSV export), Users & access, Platform health. Every AWS change goes through simulation and an approval request.
+### Removed
+- The Tailwind/D3 UI (`src/components/*`, `src/index.css`, `postcss.config.js`) and the unused packages (tailwindcss, postcss, autoprefixer, d3, lucide-react, date-fns, clsx, tailwind-merge).
+
 ## [Unreleased] - Milestone 5: Frontend De-Mocking & Live Wiring
 ### Added
 - Backend: `POST /api/v1/refresh` (data < 1h old -> ready; otherwise one Step Functions execution under the `sync:global:lock` Redis lock, watched until completion), `WS /ws/events` (session-cookie auth, Origin check, relays `pubsub:platform_events`: SYNC_STARTED/COMPLETED, APPROVAL_REQUESTED/UPDATED), `threat_activity` (derived from detections) and `requests_24h` in the bootstrap; `SAS_SYNC_STATE_MACHINE_ARN` wired in app.yaml.

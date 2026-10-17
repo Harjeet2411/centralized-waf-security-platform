@@ -3,6 +3,7 @@ backend image (infra/README.md), or locally against the dev database:
 
     python -m app.cli create-admin --email alice@example.com --name "Alice Admin" --sso-subject <IdP sub>
     python -m app.cli register-accounts --file accounts.csv
+    python -m app.cli seed-demo        # local/test only: demo users + synthetic dataset (docker-compose)
 
 accounts.csv columns: account_id,name,environment,owner,regions[,discovery_role_arn,response_role_arn]
 (regions separated by ";"). Already-registered accounts are skipped. Everything is audited as the CLI actor.
@@ -17,8 +18,11 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import func, select
 
+from app.config import get_settings
 from app.database import SessionLocal
+from app.models import Account
 from app.services import registry_service as reg
 
 CLI_ACTOR = reg.Actor(email="cli@sas-platform.internal", role="System")
@@ -62,6 +66,33 @@ async def register_accounts(path: Path) -> int:
     return 1 if failed else 0
 
 
+DEMO_USERS = [
+    ("admin@sas.local", "Demo Security Admin", "Security Admin"),
+    ("analyst@sas.local", "Demo Security Analyst", "Security Analyst"),
+    ("soc.analyst@sas.local", "Demo SOC Analyst", "SOC Analyst"),
+    ("auditor@sas.local", "Demo Auditor", "Auditor"),
+]
+
+
+async def seed_demo() -> int:
+    """Local demo only. Skips if any account exists, so it never touches a real inventory."""
+    if get_settings().environment not in ("local", "test"):
+        print("seed-demo only runs when SAS_ENVIRONMENT is local or test", file=sys.stderr)  # noqa: T201
+        return 2
+    async with SessionLocal() as db:
+        if await db.scalar(select(func.count()).select_from(Account)):
+            print("Accounts already exist; demo data not loaded.")  # noqa: T201
+            return 0
+        for email, name, role in DEMO_USERS:
+            await reg.create_user(db, reg.UserCreate(email=email, full_name=name, role=role,
+                                                     sso_subject_id=f"demo:{email}"), CLI_ACTOR)
+        raw = await (await db.connection()).get_raw_connection()
+        await raw.driver_connection.execute(Path(__file__).with_name("demo_seed.sql").read_text(encoding="utf-8"))
+        await db.commit()
+    print(f"Demo data loaded; demo users: {', '.join(u[0] for u in DEMO_USERS)}")  # noqa: T201
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -72,9 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_argument("--sso-subject", required=True, help="the IdP 'sub' claim for this person")
     accounts = sub.add_parser("register-accounts", help="register AWS accounts from a CSV file")
     accounts.add_argument("--file", required=True, type=Path)
+    sub.add_parser("seed-demo", help="local/test only: load demo users and a synthetic dataset")
     args = parser.parse_args(argv)
     if args.command == "create-admin":
         return asyncio.run(create_admin(args.email, args.name, args.sso_subject))
+    if args.command == "seed-demo":
+        return asyncio.run(seed_demo())
     return asyncio.run(register_accounts(args.file))
 
 

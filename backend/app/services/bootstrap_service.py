@@ -186,7 +186,8 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
             exposed[ep.account_id] += 1
             protected[ep.account_id] += ep.webacl_id is not None
         endpoints_out.append(c.EndpointOut(
-            id=str(ep.id), account_id=ep.account_id, account_name=account_names.get(ep.account_id, ""),
+            id=str(ep.id), resource_arn=ep.resource_arn, account_id=ep.account_id,
+            account_name=account_names.get(ep.account_id, ""),
             name=ep.name, type=c.ENDPOINT_TYPE[ep.type], dns_name=ep.dns_name, internet_facing=ep.internet_facing,
             waf_enabled=ep.webacl_id is not None, waf_arn=waf_arn, logging_enabled=ep.logging_enabled,
             status=ep.waf_status.lower(), region=ep.region, visibility_level=ep.visibility_level,

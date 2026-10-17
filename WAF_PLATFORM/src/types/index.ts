@@ -37,6 +37,7 @@ export interface AWSAccount {
 
 export interface Endpoint {
   id: string;
+  resource_arn: string;
   account_id: string;
   account_name: string;
   name: string;

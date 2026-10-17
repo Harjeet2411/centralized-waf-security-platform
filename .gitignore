@@ -12,6 +12,10 @@ __pycache__/
 # Frontend
 WAF_PLATFORM/node_modules/
 WAF_PLATFORM/dist/
+*.tsbuildinfo
+
+# Source archive (git archive output)
+sas-waf-platform.zip
 
 # Git Bash crash dumps
 *.stackdump

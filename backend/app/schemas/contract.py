@@ -99,6 +99,7 @@ class AWSAccountOut(Contract):
 
 class EndpointOut(Contract):
     id: str
+    resource_arn: str
     account_id: str
     account_name: str
     name: str
