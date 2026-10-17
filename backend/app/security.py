@@ -88,7 +88,11 @@ _UNAUTHENTICATED = HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticate
 async def get_principal(
     request: Request, db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)
 ) -> Principal:
-    session_id = request.cookies.get(get_settings().session_cookie_name)
+    return await principal_from_session(request.cookies.get(get_settings().session_cookie_name), db, redis)
+
+
+async def principal_from_session(session_id: str | None, db: AsyncSession, redis: Redis) -> Principal:
+    """Shared by HTTP dependencies and the WebSocket handshake (which has no Request object)."""
     if not session_id:
         raise _UNAUTHENTICATED
     raw = await redis.get(_session_key(session_id))

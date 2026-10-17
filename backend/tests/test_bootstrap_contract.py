@@ -17,7 +17,7 @@ TS_TO_SCHEMA = {
     "Entity": c.EntityOut, "ThreatIntel": c.ThreatIntelOut, "Campaign": c.CampaignOut, "Detection": c.DetectionOut,
     "DetectionEvidence": c.DetectionEvidenceOut, "Approval": c.ApprovalOut, "DriftEvent": c.DriftEventOut,
     "PlatformHealth": c.PlatformHealthOut, "CollectorHealth": c.CollectorHealthOut,
-    "ComponentHealth": c.ComponentHealthOut,
+    "ComponentHealth": c.ComponentHealthOut, "ThreatActivity": c.ThreatActivityOut, "Bootstrap": c.BootstrapOut,
 }
 
 
@@ -111,9 +111,10 @@ async def seed(db) -> dict:
     ), {"ts": now - timedelta(hours=1), "a": acct, "w": webacl_id})
     await db.execute(text(
         "INSERT INTO detections (type, title, description, severity, confidence, entity_ids, campaign_id, accounts,"
-        " evidence, recommended_action) VALUES ('MALICIOUS_ALLOWED', 'Malicious allowed', 'desc', 'CRITICAL', 92,"
+        " evidence, recommended_action, allowed_requests) VALUES ('MALICIOUS_ALLOWED', 'Malicious allowed', 'desc',"
+        " 'CRITICAL', 92,"
         " ARRAY[CAST(:e AS uuid)], :cp, ARRAY[:a], '[{\"type\": \"waf\", \"label\": \"allowed\", \"value\": \"42\"}]',"
-        " 'restore BLOCK')"
+        " 'restore BLOCK', 42)"
     ), {"e": entity_id, "cp": campaign_id, "a": acct})
     await db.execute(text(
         "INSERT INTO approvals (approval_code, action_type, title, target, account_id, account_name, webacl_id,"
@@ -180,4 +181,9 @@ async def test_seeded_bootstrap_maps_db_to_contract(client, db):
     health = body["platform_health"]
     assert health["overall"] == "degraded" and health["threat_intel"]["detail"] == "GreyNoise 429"
     assert health["collectors"][0]["account_name"] == "prod-payments-04"
+
+    [activity] = body["threat_activity"]
+    assert activity["type"] == "malicious_allowed" and activity["waf_action"] == "ALLOW"
+    assert activity["ip_count"] == 1 and activity["asn_count"] == 1 and activity["target"] == "prod-payments-04"
+    assert activity["ja4"] == "t13d1516h2_8daaf6152771_b186095e22b6" and activity["confidence"] == "high"
     assert health["data_freshness"] == "0 min ago"

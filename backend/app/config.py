@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     sns_topic_arn: str = ""  # approval notifications; empty = disabled
     verify_wait_seconds: float = 2.0  # Rule #7: pause before re-reading AWS state
     ttl_expiring_window_minutes: int = 15
+    sync_state_machine_arn: str = ""  # /api/v1/refresh starts this Step Functions state machine
 
     # ECS injects the RDS secret's username/password as separate env vars and cannot compose a URL; when
     # SAS_DB_HOST is set, database_url is built from these parts (TLS required).

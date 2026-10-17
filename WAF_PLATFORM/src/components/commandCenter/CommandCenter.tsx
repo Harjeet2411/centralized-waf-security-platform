@@ -110,7 +110,7 @@ function PostureRing({ dimensions, overall }: { dimensions: PostureDimension[]; 
               </button>
             ))}
           </div>
-          {!expanded && (
+          {!expanded && dimensions.length > 5 && (
             <button onClick={() => setExpanded(true)} className="mt-2 text-[10px] text-white/25 hover:text-white/50 transition-colors">
               +{dimensions.length - 5} more dimensions
             </button>
@@ -146,13 +146,23 @@ function PostureRing({ dimensions, overall }: { dimensions: PostureDimension[]; 
 }
 
 function ThreatActivityStream() {
-  const { threatActivity, openDrawer } = useAppStore();
+  const { threatActivity, campaigns, openDrawer, setPage, pushContext } = useAppStore();
+  const openCampaign = (campaignId: string | null) => {
+    const campaign = campaigns.find(c => c.id === campaignId);
+    if (!campaign) return;
+    pushContext({ label: `CAMPAIGN ${campaign.campaign_code}` });
+    setPage('investigation');
+    openDrawer('campaign', campaign);
+  };
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
     <div className="glass rounded-xl p-5 h-full">
       <div className="section-label">Threat Activity</div>
       <div className="space-y-2">
+        {threatActivity.length === 0 && (
+          <div className="text-[11px] text-white/30 px-1">No detections yet. Activity appears after the first telemetry sync.</div>
+        )}
         {threatActivity.map((item, i) => {
           const severityCls: Record<string, string> = {
             critical: 'border-l-rose-500 bg-rose-500/[0.03]',
@@ -172,7 +182,7 @@ function ThreatActivityStream() {
             >
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-white/25">{item.time}</span>
+                  <span className="text-[10px] font-mono text-white/25">{new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   <SeverityBadge severity={item.severity} />
                 </div>
                 <Zap size={10} className={item.severity === 'critical' ? 'text-rose-400' : 'text-white/20'} />
@@ -180,6 +190,7 @@ function ThreatActivityStream() {
               <div className="text-[12px] font-semibold text-white/80 mb-1">{item.title}</div>
               <div className="text-[10px] text-white/35">
                 {item.ip_count} IPs · {item.asn_count} ASNs · {item.country_count} countries
+                {item.ja4 && <span className="font-mono text-violet-400/70"> · JA4 {item.ja4.slice(0, 18)}…</span>}
               </div>
               {expanded === `ta-${i}` && (
                 <div className="mt-3 pt-3 border-t border-white/[0.05] animate-fade-in space-y-2">
@@ -200,9 +211,10 @@ function ThreatActivityStream() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button className="btn btn-primary btn-sm flex-1">Investigate</button>
-                    <button className="btn btn-ghost btn-sm flex-1">View Campaign</button>
-                    <button className="btn btn-ghost btn-sm flex-1">Simulate</button>
+                    <button className="btn btn-primary btn-sm flex-1" onClick={e => { e.stopPropagation(); setPage('detection'); }}>Investigate</button>
+                    <button className="btn btn-ghost btn-sm flex-1" disabled={!item.campaign_id}
+                      onClick={e => { e.stopPropagation(); openCampaign(item.campaign_id); }}>View Campaign</button>
+                    <button className="btn btn-ghost btn-sm flex-1" onClick={e => { e.stopPropagation(); setPage('simulation'); }}>Simulate</button>
                   </div>
                 </div>
               )}
@@ -229,7 +241,7 @@ function VisibilityMatrix() {
       <div className="section-label">Logging Visibility</div>
       <div className="space-y-1.5">
         {webacls.map(wacl => {
-          const vis = wacl.logging_enabled ? 'FULL' : 'METRICS';
+          const vis = ({ full: 'FULL', sampled: 'SAMPLED', metrics: 'METRICS', none: 'NONE' } as const)[wacl.visibility_level];
           return (
             <div key={wacl.id} className="flex items-center gap-3 py-1">
               <span className="text-[10px] text-white/40 truncate flex-1 font-mono">{wacl.account_name}</span>
@@ -242,6 +254,7 @@ function VisibilityMatrix() {
                   `} title={`${wacl.name}: ${vis}`}>
                     {level === vis && <div className="w-full h-full flex items-center justify-center">
                       {level === 'FULL' && <Eye size={10} className="text-white/80" />}
+                      {level === 'SAMPLED' && <Eye size={10} className="text-white/60" />}
                       {level === 'METRICS' && <Eye size={10} className="text-white/50" />}
                       {level === 'NONE' && <EyeOff size={10} className="text-white/20" />}
                     </div>}
@@ -285,7 +298,7 @@ function CampaignSummary() {
           <button
             key={campaign.id}
             onClick={() => {
-              pushContext({ label: `CAMPAIGN ${campaign.id.toUpperCase()}` });
+              pushContext({ label: `CAMPAIGN ${campaign.campaign_code}` });
               setPage('investigation');
               openDrawer('campaign', campaign);
             }}
@@ -348,7 +361,8 @@ function DetectionSummary() {
 
 export function CommandCenter() {
   const { postureDimensions } = useAppStore();
-  const overall = postureDimensions.reduce((s, d) => s + d.value, 0) / postureDimensions.length;
+  const dimensions = postureDimensions.filter(d => d.key !== 'overall');
+  const overall = postureDimensions.find(d => d.key === 'overall')?.value ?? 0;
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -362,7 +376,10 @@ export function CommandCenter() {
 
         {/* Posture + Campaigns - center */}
         <div className="col-span-5 space-y-4">
-          <PostureRing dimensions={postureDimensions} overall={Math.round(overall)} />
+          {dimensions.length > 0
+            ? <PostureRing dimensions={dimensions} overall={Math.round(overall)} />
+            : <div className="glass rounded-xl p-5"><div className="section-label">Security Posture</div>
+                <div className="text-[11px] text-white/30">Not scored yet: the drift/scoring engine runs after the first full sync.</div></div>}
           <CampaignSummary />
         </div>
 

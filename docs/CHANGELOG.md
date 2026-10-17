@@ -5,6 +5,17 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Milestone 5: Frontend De-Mocking & Live Wiring
+### Added
+- Backend: `POST /api/v1/refresh` (data < 1h old -> ready; otherwise one Step Functions execution under the `sync:global:lock` Redis lock, watched until completion), `WS /ws/events` (session-cookie auth, Origin check, relays `pubsub:platform_events`: SYNC_STARTED/COMPLETED, APPROVAL_REQUESTED/UPDATED), `threat_activity` (derived from detections) and `requests_24h` in the bootstrap; `SAS_SYNC_STATE_MACHINE_ARN` wired in app.yaml.
+- Frontend: `src/api/client.ts` (same-origin fetch, typed errors, WebSocket with backoff), `src/api/hooks.ts` (React Query), `AuthGate` (OIDC sign-in screen, bootstrap hydration, live events); `src/store.ts` hydrates from `GET /api/v1/bootstrap` and exposes `triggerRefresh`, `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest` (errors such as "DENIED: Protected Entity" surfaced, snapshot always refetched).
+- Views rewired: Command Center (real activity, posture with explicit overall, honest visibility levels), Simulation (real Rule Impact Simulator + approval request), Response (approve/reject with codes, guardrail and verification state), Campaign drawer (live story, evidence, member entities, techniques), Cost (list-price estimates from live inventory, labelled), TopBar (smart refresh + sync state), Sidebar (live reachability).
+- `src/types/index.ts` gains the contract+ fields, `ThreatActivity`, `Bootstrap` and detail views; backend contract test covers them.
+### Removed
+- `src/data/mockData.ts`, all `Math.random` figures (Cost, Simulation) and hardcoded labels ("39 accounts", fixed technique lists).
+### Fixed
+- `tsconfig.json`: dropped `baseUrl` (TypeScript 6 rejects it), added `src/vite-env.d.ts`; type-check and `vite build` now pass.
+
 ## [Unreleased] - Account & User Registry
 ### Added
 - Governance API (Security Admin / `MANAGE_USERS` only): `GET/POST /api/v1/governance/accounts`, `PATCH /api/v1/governance/accounts/{account_id}`, `GET/POST /api/v1/governance/users`, `PATCH /api/v1/governance/users/{id}`. Role ARNs default to the StackSet roles and must belong to the registered account; scoped accounts must exist; the last active Security Admin can't be deactivated or demoted; every write is audited (`ACCOUNT_REGISTERED`, `ACCOUNT_UPDATED`, `USER_PROVISIONED`, `USER_UPDATED`, `USER_DEACTIVATED`).

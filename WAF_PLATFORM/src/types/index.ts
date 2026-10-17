@@ -1,15 +1,21 @@
+// Wire contract with the FastAPI backend (backend/app/schemas/contract.py). Field names are snake_case exactly as
+// served; backend/tests/test_bootstrap_contract.py fails if any interface field below is not served.
+
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'healthy' | 'unknown';
 export type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'none';
 export type Confidence = 'high' | 'medium' | 'low' | 'none';
 export type VisibilityLevel = 'full' | 'sampled' | 'metrics' | 'none';
+export type ScoreConfidence = 'FULL' | 'PARTIAL' | 'SAMPLED' | 'NONE';
 export type AccountEnv = 'prod' | 'uat' | 'dev' | 'shared';
 export type EntityType = 'ip' | 'asn' | 'country' | 'org' | 'ja3' | 'ja4' | 'ua' | 'uri' | 'application' | 'account' | 'webacl' | 'rule';
 export type WafAction = 'BLOCK' | 'ALLOW' | 'COUNT';
+export type RuleAction = WafAction | 'CAPTCHA' | 'CHALLENGE';
 export type EndpointType = 'ALB' | 'CloudFront' | 'APIGW';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'executing' | 'completed' | 'failed' | 'rolled_back';
 export type DriftSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type DetectionType = 'scanner' | 'credential_attack' | 'distributed_attack' | 'sql_injection' | 'bot_automation' | 'malicious_allowed' | 'ja4_campaign' | 'slow_distributed';
-export type AttackPhase = 'reconnaissance' | 'endpoint_discovery' | 'credential_attempts' | 'sqli_probing' | 'distributed_campaign' | 'malicious_allowed';
+export type AttackPhaseName = 'reconnaissance' | 'endpoint_discovery' | 'credential_attempts' | 'sqli_probing' | 'distributed_campaign' | 'malicious_allowed';
+export type HealthStatus = 'healthy' | 'degraded' | 'unavailable';
 
 export interface AWSAccount {
   id: string;
@@ -17,7 +23,7 @@ export interface AWSAccount {
   name: string;
   environment: AccountEnv;
   owner: string;
-  status: 'healthy' | 'degraded' | 'unavailable';
+  status: HealthStatus;
   last_discovered: string;
   waf_coverage: number;
   security_score: number;
@@ -25,6 +31,8 @@ export interface AWSAccount {
   webacl_count: number;
   logging_visibility: VisibilityLevel;
   region: string;
+  score_confidence: ScoreConfidence;
+  regions: string[];
 }
 
 export interface Endpoint {
@@ -40,6 +48,7 @@ export interface Endpoint {
   logging_enabled: boolean;
   status: 'protected' | 'partially_protected' | 'unprotected' | 'unknown';
   region: string;
+  visibility_level: VisibilityLevel;
 }
 
 export interface WebACL {
@@ -49,13 +58,17 @@ export interface WebACL {
   name: string;
   arn: string;
   scope: 'REGIONAL' | 'CLOUDFRONT';
-  default_action: WafAction;
+  default_action: 'BLOCK' | 'ALLOW';
   security_score: number;
   managed_rule_health: number;
   drift_count: number;
   rule_count: number;
   logging_enabled: boolean;
   region: string;
+  score_confidence: ScoreConfidence;
+  visibility_level: VisibilityLevel;
+  score_evidence: Record<string, unknown>;
+  requests_24h: number;
 }
 
 export interface WafRule {
@@ -63,7 +76,7 @@ export interface WafRule {
   webacl_id: string;
   name: string;
   type: 'managed' | 'custom';
-  action: WafAction;
+  action: RuleAction;
   priority: number;
   managed_group: string | null;
   managed_version: string | null;
@@ -78,6 +91,7 @@ export interface WafRule {
   rate_limit: number | null;
   version_status: 'current' | 'outdated' | 'deprecated' | 'unknown';
   last_modified: string;
+  rule_type: 'MANAGED' | 'CUSTOM' | 'RATE_BASED' | 'IP_SET';
 }
 
 export interface Entity {
@@ -104,6 +118,11 @@ export interface Entity {
   campaigns: string[];
   techniques: string[];
   threat_intel: ThreatIntel[];
+  confidence_score: number;
+  business_impact: number;
+  final_risk: number;
+  classification: string;
+  is_allow_listed: boolean;
 }
 
 export interface ThreatIntel {
@@ -118,7 +137,7 @@ export interface ThreatIntel {
 export interface Campaign {
   id: string;
   name: string;
-  type: DetectionType;
+  type: DetectionType | string;
   risk_level: RiskLevel;
   confidence: Confidence;
   first_seen: string;
@@ -134,6 +153,8 @@ export interface Campaign {
   waf_action_breakdown: Record<WafAction, number>;
   description: string;
   status: 'active' | 'monitoring' | 'resolved' | 'suppressed';
+  campaign_code: string;
+  recommended_action: string;
 }
 
 export interface Detection {
@@ -151,17 +172,18 @@ export interface Detection {
   affected_accounts: string[];
   status: 'new' | 'investigating' | 'correlated' | 'actioned' | 'false_positive';
   evidence: DetectionEvidence[];
+  recommended_action: string;
 }
 
 export interface DetectionEvidence {
   type: string;
   label: string;
   value: string;
-  detail?: string;
+  detail?: string | null;
 }
 
 export interface AttackPhase {
-  phase: AttackPhase;
+  phase: AttackPhaseName | string;
   label: string;
   description: string;
   evidence_count: number;
@@ -188,6 +210,14 @@ export interface Approval {
     fp_risk: string;
   };
   lifecycle_stage: LifecycleStage;
+  approval_code: string;
+  status_detail: string;
+  risk_level: string;
+  allow_list_check: string;
+  verification_status: string | null;
+  aws_request_id: string | null;
+  required_approver_role: string;
+  expires_at: string | null;
 }
 
 export type LifecycleStage =
@@ -207,6 +237,7 @@ export interface DriftEvent {
   actual: string;
   detected_at: string;
   status: 'open' | 'acknowledged' | 'resolved' | 'suppressed';
+  drift_code: string;
 }
 
 export interface PlatformHealth {
@@ -224,14 +255,14 @@ export interface PlatformHealth {
 export interface CollectorHealth {
   account_id: string;
   account_name: string;
-  status: 'healthy' | 'degraded' | 'unavailable';
+  status: HealthStatus;
   last_success: string;
   error: string | null;
   affected_modules: string[];
 }
 
 export interface ComponentHealth {
-  status: 'healthy' | 'degraded' | 'unavailable';
+  status: HealthStatus;
   detail: string;
   last_check: string;
 }
@@ -247,6 +278,7 @@ export interface SecurityPosture {
   threat_exposure: number;
   response_readiness: number;
   evidence_confidence: number;
+  count_exposure: number;
   overall: number;
 }
 
@@ -256,6 +288,105 @@ export interface PostureDimension {
   value: number;
   why: { label: string; value: number; positive: boolean }[];
   evidence_count: number;
+}
+
+export interface ThreatActivity {
+  id: string;
+  time: string;
+  title: string;
+  type: DetectionType;
+  severity: string;
+  ja4: string | null;
+  ip_count: number;
+  asn_count: number;
+  country_count: number;
+  target: string;
+  technique: string;
+  waf_action: WafAction;
+  risk: string;
+  confidence: Confidence;
+  campaign_id: string | null;
+}
+
+export interface Bootstrap {
+  accounts: AWSAccount[];
+  endpoints: Endpoint[];
+  webacls: WebACL[];
+  rules: Record<string, WafRule[]>;
+  entities: Entity[];
+  campaigns: Campaign[];
+  detections: Detection[];
+  drift_events: DriftEvent[];
+  approvals: Approval[];
+  platform_health: PlatformHealth;
+  posture_dimensions: PostureDimension[];
+  generated_at: string;
+  threat_activity: ThreatActivity[];
+}
+
+// --- views fetched on demand (not part of the bootstrap) -------------------------------------------------
+
+export interface Principal {
+  user_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  permissions: string[];
+  scoped_account_ids: string[];
+  mfa: boolean;
+}
+
+export interface CampaignDetailView {
+  campaign: Campaign;
+  correlation_evidence: DetectionEvidence[];
+  members: Entity[];
+  targeted_uris: string[];
+  techniques: string[];
+}
+
+export interface EntityDetailView {
+  entity: Entity;
+  graph: {
+    nodes: { id: string; type: string; label: string; risk_level: string | null }[];
+    edges: { source: string; target: string; type: string; count: number }[];
+  };
+  timeline: { bucket: string; BLOCK: number; ALLOW: number; COUNT: number }[];
+  recent_events: Record<string, unknown>[];
+  allowed_explanations: {
+    webacl_id: string; webacl_name: string; allowed_requests: number; default_action: string;
+    matched_rules: string[]; count_mode_rules: string[]; open_drift: Record<string, unknown>[];
+  }[];
+  visibility: Record<string, number>;
+  recommended_action: string | null;
+}
+
+export interface SimulationResult {
+  id: string;
+  title: string;
+  proposal: Record<string, unknown>;
+  evaluated_requests: number;
+  would_block: number;
+  would_allow: number;
+  newly_allowed: number;
+  potential_false_positives: number;
+  fp_rate_percent: number;
+  malicious_matched: number;
+  legitimate_impact: 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH';
+  risk_reduction: 'HIGH' | 'MEDIUM' | 'LOW';
+  allow_list_passed: boolean;
+  protected_requests_matched: number;
+  affected_accounts: string[];
+  affected_webacls: string[];
+  visibility: Record<string, number>;
+  visibility_note: string | null;
+  false_positive_samples: Record<string, unknown>[];
+  window_hours: number;
+}
+
+export interface SyncStatus {
+  status: 'ready' | 'syncing' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED' | string;
+  last_sync?: string;
+  execution_arn?: string;
 }
 
 export interface InvestigationWorkspace {

@@ -251,6 +251,7 @@ Resources:
             - {Name: SAS_DB_NAME, Value: sas_waf}
             - {Name: SAS_REDIS_URL, Value: {"Fn::ImportValue": !Sub "${EnvironmentName}-RedisUrl"}}
             - {Name: SAS_SNS_TOPIC_ARN, Value: {"Fn::ImportValue": !Sub "${EnvironmentName}-ApprovalTopicArn"}}
+            - {Name: SAS_SYNC_STATE_MACHINE_ARN, Value: {"Fn::ImportValue": !Sub "${EnvironmentName}-SyncStateMachineArn"}}
             - {Name: SAS_OIDC_ISSUER, Value: !Ref OidcIssuer}
             - {Name: SAS_OIDC_CLIENT_ID, Value: !Ref OidcClientId}
             - Name: SAS_FRONTEND_URL

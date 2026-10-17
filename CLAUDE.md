@@ -70,8 +70,9 @@ Numbering matches `WAF_PLATFORM_SPEC.md` §15 — refer to them by number in cod
 Vite 8, React 19.2, TypeScript 6, Tailwind CSS 4 (`@tailwindcss/postcss`), Zustand 5, TanStack React Query 5 (installed, not yet used), D3 7, date-fns 4, lucide-react, react-router-dom 7 (installed, navigation currently uses `currentPage` in the store). Path alias `@/` → `src/`. Dev server port **5000**.
 
 - `src/types/index.ts` — **the wire contract** (see §8).
-- `src/store.ts` — Zustand store exported as **`useAppStore`** (not `usePlatformStore`). Holds navigation, drawer, workspace tabs, context breadcrumb, filters, and (today) mock data. It has **no** mutation actions yet; `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest`, `triggerRefresh` are added in Milestone 5.
-- `src/data/mockData.ts` — imported **only** by `src/store.ts`. Delete in Milestone 5.
+- `src/store.ts` — Zustand store exported as **`useAppStore`**: UI state + the hydrated bootstrap snapshot + actions `triggerRefresh`, `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest` (all through the backend lifecycle).
+- `src/data/mockData.ts` — **deleted** (Milestone 5). Data comes only from `GET /api/v1/bootstrap` (hydrated into the store by `AuthGate`) and the on-demand hooks in `src/api/hooks.ts`; live updates via `/ws/events`. Never reintroduce fixtures or `Math.random` into `src/`.
+- Toolchain: Vite 8 needs Node ≥ 20.19 (`npx -y -p node@20.20.2 node node_modules/vite/bin/vite.js build` works without upgrading). The lockfile was generated on another OS; on Windows add rolldown's native binding with `npm install --no-save @rolldown/binding-win32-x64-msvc@<rolldown version>` after `npm ci`. Type-check: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`.
 - `src/components/` — `commandCenter`, `threat-intelligence`, `entities` (+ `EntityDetailPanel`), `waf-security`, `investigation` (+ `CampaignDetail`), `detection`, `simulation`, `response`, `governance`, `cost`, `reports`, `layout` (`Sidebar`, `TopBar`, `ContextBar`), `common` (`Drawer`).
 - `src/index.css` — design tokens as CSS variables (`--color-bg-primary`, `--color-critical`, …). **These are the real tokens**; `docs/DESIGN_LANGUAGE.md` hex values are approximations of them.
 

@@ -54,6 +54,7 @@ async def list_webacls(
             managed_rule_health=round(100.0 * current / total, 2) if total else 0.0, drift_count=drift.get(w.id, 0),
             rule_count=len(rules[w.id]), logging_enabled=w.logging_enabled, region=w.region,
             score_confidence=w.score_confidence, visibility_level=w.visibility_level, score_evidence=w.score_evidence,
+            requests_24h=w.requests_24h,
             rules=rules[w.id],
         ))
     return out

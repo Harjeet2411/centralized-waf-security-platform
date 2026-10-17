@@ -20,7 +20,8 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
 ];
 
 export function Sidebar() {
-  const { currentPage, setPage, sidebarCollapsed, globalSearch, setGlobalSearch } = useAppStore();
+  const { currentPage, setPage, sidebarCollapsed, globalSearch, setGlobalSearch, accounts, platformHealth } = useAppStore();
+  const reachable = accounts.filter(a => a.status !== 'unavailable').length;
 
   return (
     <aside className={`sidebar ${sidebarCollapsed ? 'w-[56px] min-w-[56px]' : ''}`}>
@@ -92,8 +93,8 @@ export function Sidebar() {
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-glow flex-shrink-0" />
           {!sidebarCollapsed && (
             <div className="min-w-0">
-              <div className="text-[10px] text-white/50 truncate">Connected</div>
-              <div className="text-[9px] text-white/25">39 accounts</div>
+              <div className="text-[10px] text-white/50 truncate capitalize">Platform {platformHealth.overall}</div>
+              <div className="text-[9px] text-white/25">{reachable}/{accounts.length} accounts reachable</div>
             </div>
           )}
         </div>

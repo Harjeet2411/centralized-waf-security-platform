@@ -130,6 +130,7 @@ class WebACLOut(Contract):
     score_confidence: ScoreConfidence  # contract+
     visibility_level: VisibilityLevel  # contract+
     score_evidence: dict  # contract+ (Rule #1)
+    requests_24h: int  # exact CloudWatch 24h total (cost estimate, volume)
 
 
 class WafRuleOut(Contract):
@@ -317,6 +318,24 @@ class PlatformHealthOut(Contract):
     data_freshness: str
 
 
+class ThreatActivityOut(Contract):
+    id: str
+    time: str
+    title: str
+    type: str
+    severity: str
+    ja4: str | None
+    ip_count: int
+    asn_count: int
+    country_count: int
+    target: str
+    technique: str
+    waf_action: Literal["BLOCK", "ALLOW", "COUNT"]
+    risk: str
+    confidence: Literal["high", "medium", "low", "none"]
+    campaign_id: str | None
+
+
 class BootstrapOut(Contract):
     accounts: list[AWSAccountOut]
     endpoints: list[EndpointOut]
@@ -331,6 +350,7 @@ class BootstrapOut(Contract):
     # Security posture dimensions are produced by the scoring engine (Milestone 3); empty until then.
     posture_dimensions: list[dict]
     generated_at: str
+    threat_activity: list[ThreatActivityOut]
 
 
 class PrincipalOut(Contract):

@@ -218,6 +218,7 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
             managed_rule_health=managed_health.get(w.id, 0.0), drift_count=drift_counts.get(w.id, 0),
             rule_count=rule_counts.get(w.id, 0), logging_enabled=w.logging_enabled, region=w.region,
             score_confidence=w.score_confidence, visibility_level=w.visibility_level, score_evidence=w.score_evidence,
+            requests_24h=w.requests_24h,
         ))
 
     accounts_out = [
@@ -245,6 +246,7 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
     campaigns = (await db.scalars(select(Campaign).order_by(Campaign.last_active.desc()).limit(FEED_LIMIT))).all()
     campaigns_list = await campaigns_out(db, campaigns)
 
+    detection_rows = (await db.scalars(select(Detection).order_by(Detection.timestamp.desc()).limit(FEED_LIMIT))).all()
     detections_out = [
         c.DetectionOut(
             id=str(d.id), type=c.DETECTION_TYPE[d.type], severity=d.severity.lower(), title=d.title,
@@ -254,7 +256,7 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
             status="correlated" if d.status == "OPEN" and d.campaign_id else c.DETECTION_STATUS[d.status],
             evidence=[c.DetectionEvidenceOut(**ev) for ev in d.evidence], recommended_action=d.recommended_action,
         )
-        for d in (await db.scalars(select(Detection).order_by(Detection.timestamp.desc()).limit(FEED_LIMIT))).all()
+        for d in detection_rows
     ]
 
     drift_out = [
@@ -278,7 +280,52 @@ async def build_bootstrap(db: AsyncSession) -> c.BootstrapOut:
         entities=entities_list, campaigns=campaigns_list, detections=detections_out, drift_events=drift_out,
         approvals=approvals_out, platform_health=await build_platform_health(db, accounts, now),
         posture_dimensions=build_posture(accounts, exposed, protected), generated_at=now.isoformat(),
+        threat_activity=await build_threat_activity(db, detection_rows[:ACTIVITY_LIMIT], account_names),
     )
+
+
+ACTIVITY_LIMIT = 20
+TECHNIQUE_LABEL = {"SQLI": "SQLi", "XSS": "XSS", "RCE": "RCE", "LOG4J": "Log4j", "LFI": "LFI",
+                   "CREDENTIAL_STUFFING": "Credential Attack", "BOT": "Bot Automation", "RATE_ABUSE": "Rate Abuse",
+                   "KNOWN_BAD_INPUT": "Known Bad Input", "BAD_REPUTATION_IP": "Bad Reputation IP",
+                   "ANONYMOUS_IP": "Anonymous IP", "FAKE_ACCOUNT_CREATION": "Fake Accounts"}
+
+
+async def build_threat_activity(db: AsyncSession, detections, account_names: dict) -> list[c.ThreatActivityOut]:
+    """Command Center activity stream, derived only from detections and the entities/campaigns they cite."""
+    entity_ids = {e for d in detections for e in d.entity_ids}
+    campaign_ids = {d.campaign_id for d in detections if d.campaign_id}
+    entities, campaigns = {}, {}
+    if entity_ids:
+        entities = {e.id: e for e in (await db.scalars(select(Entity).where(Entity.id.in_(entity_ids)))).all()}
+    if campaign_ids:
+        rows = (await db.scalars(select(Campaign).where(Campaign.id.in_(campaign_ids)))).all()
+        campaigns = {cp.id: cp for cp in rows}
+    out = []
+    for d in detections:
+        members = [entities[e] for e in d.entity_ids if e in entities]
+        ips = [m for m in members if m.type == "IP"]
+        campaign = campaigns.get(d.campaign_id)
+        ja4 = next((m.value for m in members if m.type == "JA4"), None) or next((m.ja4 for m in ips if m.ja4), None)
+        techniques = sorted({t for m in members for t in (m.attack_techniques or [])})
+        if d.allowed_requests:
+            action = "ALLOW"
+        elif any(m.blocked_count for m in ips):
+            action = "BLOCK"
+        else:
+            action = "COUNT"
+        out.append(c.ThreatActivityOut(
+            id=str(d.id), time=c.iso(d.timestamp), title=d.title, type=c.DETECTION_TYPE[d.type],
+            severity=d.severity.lower(), ja4=ja4, ip_count=len(ips),
+            asn_count=len(campaign.asns or []) if campaign else len({m.asn for m in ips if m.asn}),
+            country_count=len(campaign.countries or []) if campaign else len({m.country for m in ips if m.country}),
+            target=", ".join(account_names.get(a, a) for a in d.accounts) or "-",
+            technique=TECHNIQUE_LABEL.get(techniques[0], techniques[0]) if techniques
+            else d.type.replace("_", " ").title(),
+            waf_action=action, risk=d.severity, confidence=c.confidence_band(d.confidence),
+            campaign_id=str(d.campaign_id) if d.campaign_id else None,
+        ))
+    return out
 
 
 async def build_platform_health(db: AsyncSession, accounts, now: datetime) -> c.PlatformHealthOut:

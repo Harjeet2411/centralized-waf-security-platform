@@ -11,10 +11,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app import events
+from app.database import get_db, get_redis
 from app.models import AllowListEntry, Approval, ApprovalDecision, AuditEvent, Change
 from app.schemas import contract as c
 from app.security import Principal, require
@@ -72,8 +74,9 @@ def _change(ch: Change) -> dict:
 @router.post("/approvals", status_code=status.HTTP_201_CREATED)
 async def create_approval(req: approval_service.ApprovalRequest,
                           principal: Principal = Depends(require("CREATE_CHANGE")),
-                          db: AsyncSession = Depends(get_db)):
+                          db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)):
     approval = await approval_service.create_approval(db, req, principal)
+    await events.publish(redis, "APPROVAL_REQUESTED", {"id": str(approval.id), "code": approval.approval_code})
     return await _detail(db, approval)
 
 
@@ -102,10 +105,11 @@ class Decision(BaseModel):
 
 @router.post("/approvals/{approval_id}/decide")
 async def decide(approval_id: uuid.UUID, body: Decision, principal: Principal = Depends(require("APPROVE")),
-                 db: AsyncSession = Depends(get_db),
+                 db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis),
                  executor_factory: approval_service.ExecutorFactory = Depends(get_executor_factory)):
     approval = await approval_service.decide(db, approval_id, body.decision, body.comment, principal, executor_factory)
     await db.refresh(approval)
+    await events.publish(redis, "APPROVAL_UPDATED", {"id": str(approval.id), "status": approval.status})
     return await _detail(db, approval)
 
 

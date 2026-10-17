@@ -43,7 +43,15 @@ function LifecycleStage({ stage, currentStage }: { stage: string; currentStage: 
 
 function ApprovalCard({ approval }: { approval: Approval }) {
   const [expanded, setExpanded] = useState(false);
-  const { openDrawer } = useAppStore();
+  const [busy, setBusy] = useState(false);
+  const { approveRequest, rejectRequest, lastError } = useAppStore();
+  const decide = async (approve: boolean) => {
+    const comment = window.prompt(approve ? 'Approval comment (optional):' : 'Reason for rejection:') ?? undefined;
+    if (!approve && !comment) return;
+    setBusy(true);
+    await (approve ? approveRequest(approval.id, comment) : rejectRequest(approval.id, comment));
+    setBusy(false);
+  };
 
   const stageOrder = ['detect', 'understand', 'correlate', 'score', 'simulate', 'guardrails', 'approval', 'execution', 'verification', 'audit'];
   const curIdx = stageOrder.indexOf(approval.lifecycle_stage);
@@ -103,11 +111,21 @@ function ApprovalCard({ approval }: { approval: Approval }) {
             </div>
           )}
 
-          <div className="flex gap-2">
-            <button className="btn btn-primary btn-sm flex-1">Approve</button>
-            <button className="btn btn-danger btn-sm">Reject</button>
-            <button className="btn btn-ghost btn-sm">View Evidence</button>
+          <div className="grid grid-cols-2 gap-2 text-[10px] text-white/35">
+            <div>Code <span className="font-mono text-white/60">{approval.approval_code}</span></div>
+            <div>Requires <span className="text-white/60">{approval.required_approver_role}</span></div>
+            <div>Guardrails <span className={approval.allow_list_check === 'PASSED' ? 'text-emerald-400' : 'text-rose-400'}>{approval.allow_list_check}</span></div>
+            <div>Verification <span className="text-white/60">{approval.verification_status ?? '—'}</span></div>
+            {approval.aws_request_id && <div className="col-span-2">AWS request <span className="font-mono text-white/60">{approval.aws_request_id}</span></div>}
+            {approval.expires_at && <div className="col-span-2">TTL expires <span className="text-white/60">{new Date(approval.expires_at).toLocaleString()}</span></div>}
           </div>
+          {lastError && <div className="text-[11px] text-rose-400">{lastError}</div>}
+          {approval.status === 'pending' && (
+            <div className="flex gap-2">
+              <button className="btn btn-primary btn-sm flex-1" disabled={busy} onClick={() => decide(true)}>{busy ? 'Working…' : 'Approve'}</button>
+              <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => decide(false)}>Reject</button>
+            </div>
+          )}
         </div>
       )}
     </div>

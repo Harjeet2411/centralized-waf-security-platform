@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.v1 import router as v1_router
+from app.api.v1.sync import ws_router
 from app.config import get_settings
 from app.database import SessionLocal, engine, redis_client
 
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(v1_router)
+app.include_router(ws_router)
 
 
 @app.get("/healthz", include_in_schema=False)
