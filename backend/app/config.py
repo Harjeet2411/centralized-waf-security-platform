@@ -37,10 +37,6 @@ class Settings(BaseSettings):
     ttl_expiring_window_minutes: int = 15
     sync_state_machine_arn: str = ""  # /api/v1/refresh starts this Step Functions state machine
 
-    # Local demo only (docker-compose): POST /api/v1/auth/demo-login signs in as this pre-seeded user without
-    # the IdP. Refused in staging/production by _guard_insecure_settings.
-    demo_login_email: str = ""
-
     # ECS injects the RDS secret's username/password as separate env vars and cannot compose a URL; when
     # SAS_DB_HOST is set, database_url is built from these parts (TLS required).
     db_host: str = ""
@@ -64,8 +60,6 @@ class Settings(BaseSettings):
             raise ValueError("SAS_COOKIE_SECURE=false is only allowed in local/test environments")
         if deployed and not self.oidc_require_mfa:
             raise ValueError("SAS_OIDC_REQUIRE_MFA=false is only allowed in local/test environments")
-        if deployed and self.demo_login_email:
-            raise ValueError("SAS_DEMO_LOGIN_EMAIL is only allowed in local/test environments")
         return self
 
 

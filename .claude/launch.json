@@ -2,7 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {"name": "api", "runtimeExecutable": "backend/.venv/Scripts/uvicorn.exe", "runtimeArgs": ["app.main:app", "--app-dir", "backend", "--port", "8000"], "port": 8000},
-    {"name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--prefix", "WAF_PLATFORM"], "port": 5000},
-    {"name": "stack", "url": "http://localhost:8088"}
+    {"name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--prefix", "WAF_PLATFORM"], "port": 5000}
   ]
 }

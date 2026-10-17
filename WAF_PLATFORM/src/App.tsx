@@ -12,7 +12,7 @@ import SplitPanel from '@cloudscape-design/components/split-panel';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
 import Badge from '@cloudscape-design/components/badge';
 import { api, queryClient } from '@/api/client';
-import { useAuthConfig, useMe } from '@/api/hooks';
+import { useMe } from '@/api/hooks';
 import { useAppStore } from '@/store';
 import { ago, notify, useFlash, useSplit } from '@/ui';
 
@@ -141,11 +141,9 @@ const LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(
 function TopBar() {
   const navigate = useNavigate();
   const me = useMe().data;
-  const auth = useAuthConfig().data;
   const { triggerRefresh, syncStatus, dataLastUpdated } = useAppStore();
   const pending = useAppStore(s => s.approvals.filter(a => a.status === 'pending').length);
   const [refreshing, setRefreshing] = useState(false);
-  const demo = auth && (auth.environment === 'local' || auth.environment === 'test');
 
   const refresh = async () => {
     if (refreshing) return;
@@ -172,8 +170,6 @@ function TopBar() {
       }}
       search={<GlobalSearch />}
       utilities={[
-        ...(demo ? [{ type: 'button' as const, text: 'Local demo', iconName: 'status-warning' as const,
-                      title: 'Synthetic demo data, not connected to AWS' }] : []),
         { type: 'button', text: freshness, iconName: 'refresh', ariaLabel: 'Refresh WAF data', onClick: refresh },
         { type: 'button', iconName: 'notification', title: 'Pending approvals', ariaLabel: `Pending approvals (${pending})`,
           badge: pending > 0, onClick: () => navigate('/response/approvals') },

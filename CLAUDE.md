@@ -64,7 +64,8 @@ Numbering matches `WAF_PLATFORM_SPEC.md` §15 — refer to them by number in cod
 ├── backend/                  # FastAPI control plane            (Milestone 1)
 ├── lambdas/                  # serverless pipeline              (Milestones 2–3)
 ├── infra/                    # StackSets + central account IaC  (Milestone 2)
-└── docker-compose.yml        # whole platform locally (postgres, redis, migrate, seed, api, web) -> http://localhost:8088
+├── README.md                 # setup guide: deploy into an AWS Organization
+└── docker-compose.yml        # dev/test dependencies only (postgres 5433, redis 6379)
 ```
 
 ### `WAF_PLATFORM/` — actual versions from `package.json`
@@ -73,7 +74,7 @@ Vite 8, React 19.2, TypeScript 6, **Cloudscape Design System** (`@cloudscape-des
 - `src/types/index.ts` — **the wire contract** (see §8).
 - `src/store.ts` — Zustand store **`useAppStore`**: the hydrated bootstrap snapshot + actions `triggerRefresh`, `approveRequest`, `rejectRequest`, `rollbackChange`, `createApprovalRequest` (all through the backend lifecycle). Zustand selectors must not return new arrays (`s => s.x.filter(...)` loops forever, React #185): select, then filter.
 - Data comes only from `GET /api/v1/bootstrap` (hydrated by `src/AuthGate.tsx`) and on-demand hooks in `src/api/hooks.ts` (`useGet` for changes, allow-list, audit, users…); live updates via `/ws/events`. Never reintroduce fixtures or `Math.random` into `src/`.
-- `src/App.tsx` — console shell: `TopNavigation` (global search, data-freshness refresh, approvals bell, user menu, "Local demo" badge), `SideNavigation`, breadcrumbs, `Flashbar`, bottom `SplitPanel`; routes lazy-load `src/pages/*`.
+- `src/App.tsx` — console shell: `TopNavigation` (global search, data-freshness refresh, approvals bell, user menu), `SideNavigation`, breadcrumbs, `Flashbar`, bottom `SplitPanel`; routes lazy-load `src/pages/*`.
 - `src/pages/` — `Dashboard` (home), `Threats` (detections, campaigns, entities + detail), `Inventory` (accounts + registration, Web ACLs + detail, endpoints + attach, drift + remediate), `Response` (simulate, approvals + detail/decide, changes & active blocks + rollback, allow list), `Governance` (audit + CSV, users, platform health).
 - `src/ui.tsx` — shared pieces: `Status` (one value→StatusIndicator map), `ResourceTable` (filter/sort/paginate via collection-hooks), `ApprovalModal` (**every AWS-mutating action ends in an approval request**), `useCan` (UI hint; the API enforces RBAC), `notify`, `useSplit`.
 - Toolchain: Node ≥ 20.19. On Windows after `npm ci`, if rolldown's binding is missing: `npm install --no-save @rolldown/binding-win32-x64-msvc@<rolldown version>`.
@@ -257,13 +258,11 @@ npm run build        # tsc -b && vite build — must pass with zero TS errors
 npx tsc -b           # type-check only
 ```
 
-### Whole platform (repo root)
+### Dev/test dependencies (repo root)
 ```bash
-docker compose up -d --build   # postgres, redis, migrate, seed (demo data), api, web -> http://localhost:8088
-docker compose up -d --wait postgres redis   # only the test/dev dependencies
-docker compose down -v         # stop and wipe data (seed reloads on next up)
+docker compose up -d --wait postgres redis   # Postgres 16 on host port 5433, Redis 7 on 6379
 ```
-Postgres 16 on host port 5433 (5432 is taken by a native install), Redis 7 on 6379. Creates `sas_waf` (dev/demo) and `sas_waf_test` (pytest; migrated down/up on every test session). `web` is nginx serving the built SPA and proxying `/api` + `/ws` to `api` (same origin, so the SameSite=Strict cookie works). `seed` runs `python -m app.cli seed-demo` and skips when any account exists.
+Creates `sas_waf` (dev) and `sas_waf_test` (pytest; migrated down/up on every test session). There is no demo dataset and no demo sign-in: the platform only shows data synced from real member accounts. Deployment into an AWS Organization is the step-by-step guide in `README.md` (infra details in `infra/README.md`).
 
 ### Backend (`backend/`) — Python 3.12 venv
 ```bash
@@ -295,7 +294,6 @@ docker build -t sas-waf-backend:local backend      # API by default; TTL worker 
 ### Auth in local dev
 Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned by `sso_subject_id` — first admin via `python -m app.cli create-admin`, everyone else via `/api/v1/governance/users` (`app/services/registry_service.py`). Privilege changes revoke the user's sessions through the `session:index:{user_id}` set. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
 
-**Local demo sign-in** (docker compose only): `SAS_DEMO_LOGIN_EMAIL=admin@sas.local` enables `POST /api/v1/auth/demo-login`, which signs in as that pre-seeded user (session marked MFA so approvals can be explored). `Settings` refuses `SAS_DEMO_LOGIN_EMAIL` in staging/production and the route 404s unless the environment is local/test. `GET /api/v1/auth/config` tells the sign-in page which methods exist. Demo users: `admin@`, `analyst@`, `soc.analyst@`, `auditor@sas.local`. With no AWS credentials, approving a change shows the audited AWS-failure path.
 
 ---
 

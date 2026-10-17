@@ -1,17 +1,5 @@
-# Whole platform locally, one command:   docker compose up -d --build   ->   http://localhost:8088
-# Local demo only: synthetic dataset (seed-demo), demo sign-in, no AWS access. Production runs on ECS Fargate with RDS,
-# ElastiCache and IAM Identity Center (infra/central_account). postgres/redis also serve the backend test suite.
-x-backend: &backend
-  build: ./backend
-  environment:
-    SAS_ENVIRONMENT: local
-    SAS_DATABASE_URL: postgresql+asyncpg://sas:sas_local_dev@postgres:5432/sas_waf
-    SAS_REDIS_URL: redis://redis:6379/0
-    SAS_FRONTEND_URL: http://localhost:8088
-    SAS_CORS_ORIGINS: '["http://localhost:8088"]'
-    SAS_COOKIE_SECURE: "false"             # plain HTTP on localhost; refused by config in staging/production
-    SAS_DEMO_LOGIN_EMAIL: admin@sas.local  # demo sign-in; refused by config in staging/production
-
+# Development and test dependencies only. The platform itself runs in your AWS account (see README.md):
+# RDS PostgreSQL 16 + ElastiCache Redis 7 + ECS Fargate + Lambdas, deployed from infra/central_account.
 services:
   postgres:
     image: postgres:16-alpine
@@ -37,39 +25,6 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
-
-  migrate:
-    <<: *backend
-    command: ["alembic", "upgrade", "head"]
-    depends_on:
-      postgres: { condition: service_healthy }
-    restart: "no"
-
-  seed:
-    <<: *backend
-    command: ["python", "-m", "app.cli", "seed-demo"]  # skips if accounts already exist
-    depends_on:
-      migrate: { condition: service_completed_successfully }
-    restart: "no"
-
-  api:
-    <<: *backend
-    depends_on:
-      seed: { condition: service_completed_successfully }
-      redis: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
-      interval: 5s
-      retries: 20
-    restart: unless-stopped
-
-  web:
-    build: ./WAF_PLATFORM
-    ports:
-      - "8088:80"
-    depends_on:
-      api: { condition: service_healthy }
-    restart: unless-stopped
 
 volumes:
   pgdata:

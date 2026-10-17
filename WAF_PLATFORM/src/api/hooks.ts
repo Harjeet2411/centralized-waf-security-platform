@@ -10,16 +10,6 @@ export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Principal>('/api/v1/me') });
 }
 
-export interface AuthConfig {
-  environment: 'local' | 'test' | 'staging' | 'production';
-  oidc_enabled: boolean;
-  demo_login_enabled: boolean;
-}
-
-export function useAuthConfig() {
-  return useQuery({ queryKey: ['auth-config'], queryFn: () => api<AuthConfig>('/api/v1/auth/config'), staleTime: Infinity });
-}
-
 /** Plain GET for on-demand views (changes, allow-list, audit, users...). */
 export function useGet<T>(path: string | null, key: unknown[] = [path]) {
   return useQuery({ queryKey: key, queryFn: () => api<T>(path!), enabled: Boolean(path) });

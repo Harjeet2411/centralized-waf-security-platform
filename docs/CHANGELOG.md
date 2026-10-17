@@ -5,6 +5,13 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - Real AWS Organization Setup (demo removed)
+### Changed
+- `README.md` is now a step-by-step guide to deploy the platform into an AWS Organization: OIDC sign-in, certificates, Lambda build, platform stack, cross-account StackSet roles (pilot OU first), backend image, application stack, schema + first admin, console publish, account registration, controlled-response prerequisites, full-log replication, organization rollout, updates and troubleshooting.
+- `docker-compose.yml` is back to dev/test dependencies only (postgres, redis).
+### Removed
+- Demo sign-in (`POST /api/v1/auth/demo-login`, `GET /api/v1/auth/config`, `SAS_DEMO_LOGIN_EMAIL`), the `seed-demo` CLI, `app/demo_seed.sql`, `tests/test_demo.py`, the console's demo button and "Local demo" badge, and the local web image (`WAF_PLATFORM/Dockerfile`, `nginx.conf`). The console now signs in only through SSO (OIDC with MFA).
+
 ## [Unreleased] - AWS-Console UI & One-Command Local Stack
 ### Added
 - Root `docker-compose.yml` runs the whole platform: postgres, redis, `migrate` (alembic), `seed` (`python -m app.cli seed-demo`), `api`, `web` (nginx serving the built SPA and proxying `/api` + `/ws`) at http://localhost:8088. `WAF_PLATFORM/Dockerfile` + `nginx.conf`.
