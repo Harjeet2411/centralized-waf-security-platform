@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sas
+          POSTGRES_PASSWORD: sas_local_dev
+          POSTGRES_DB: sas_waf
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sas -d sas_waf" --health-interval 2s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-retries 30
+    env:
+      PGPASSWORD: sas_local_dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            lambdas/pyproject.toml
+      - name: Create the test database
+        run: psql -h localhost -p 5433 -U sas -d sas_waf -f backend/scripts/create_test_db.sql
+      - name: Install backend and lambdas
+        run: |
+          python -m pip install -e "backend[dev]"
+          python -m pip install -e "lambdas[dev]"
+      - name: Backend lint
+        working-directory: backend
+        run: ruff check .
+      - name: Backend tests
+        working-directory: backend
+        run: python -m pytest -q
+      - name: Lambdas lint
+        working-directory: lambdas
+        run: |
+          ruff check .
+          cfn-lint ../infra/stacksets/*.yaml ../infra/central_account/*.yaml
+      - name: Lambdas tests
+        working-directory: lambdas
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: WAF_PLATFORM
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: WAF_PLATFORM/package-lock.json
+      - run: npm ci
+      - name: Type-check and build
+        run: npm run build
