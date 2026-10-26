@@ -30,7 +30,7 @@ Every screen, pipeline and workflow exists to answer, with evidence:
 1. **NO** AWS Firewall Manager. **NO** AWS Shield Advanced. **NO** centralized WAF data lake (no shipping 39 accounts of full logs into OpenSearch/Splunk/Athena). **NO** third-party SIEM/SOAR or managed firewall platform.
 2. **NO autonomous AI-driven AWS changes.** AI/LLM use is read-only: investigation summaries, evidence summarization, attack stories, analyst recommendations, natural-language explanation. An AI output may *pre-fill* an approval request; it may never approve or execute one.
 3. **NO browser-to-AWS calls and NO AWS credentials in the frontend.** The SPA talks only to FastAPI over HTTPS/WSS with `HttpOnly; Secure; SameSite=Strict` session cookies issued after IAM Identity Center (SSO + MFA) login.
-4. **NO mock, fake or hardcoded security data in production.** `WAF_PLATFORM/src/data/mockData.ts` is prototype scaffolding; it is retired in Milestone 5. Test fixtures live under `tests/` only and are never imported by app code.
+4. **NO mock, fake or hardcoded security data in production.** The prototype's `WAF_PLATFORM/src/data/mockData.ts` has been retired (see `docs/CHANGELOG.md`); don't reintroduce static data in the SPA. Test fixtures live under `tests/` only and are never imported by app code.
 5. **2D investigation-first UI.** D3.js v7 2D force graphs. No 3D globes, no decorative hero visuals.
 
 ---
