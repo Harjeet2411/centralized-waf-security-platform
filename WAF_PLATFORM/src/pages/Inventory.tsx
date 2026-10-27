@@ -1,6 +1,6 @@
 // WAF inventory module: accounts (with registration), Web ACLs (rules, score evidence, false-positive candidates),
 // endpoints (attach a Web ACL) and configuration drift (remediate). Changes go through ApprovalModal.
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';

@@ -1,6 +1,6 @@
 // Controlled response module: simulate -> request approval -> approve/reject -> execute/verify -> rollback.
 // The browser never calls AWS: every action here is a FastAPI call that the backend guards, executes and audits.
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';

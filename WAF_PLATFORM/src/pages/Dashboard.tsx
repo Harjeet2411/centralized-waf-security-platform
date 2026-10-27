@@ -1,5 +1,4 @@
 // Home: the one screen a cloud engineer opens first. Every widget links to the module that owns the data.
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import Alert from '@cloudscape-design/components/alert';
 import BarChart from '@cloudscape-design/components/bar-chart';
