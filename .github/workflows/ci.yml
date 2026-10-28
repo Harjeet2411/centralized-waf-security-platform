@@ -70,3 +70,12 @@ jobs:
       - run: npm ci
       - name: Type-check and build
         run: npm run build
+
+  backend-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the backend image
+        run: docker build -t sas-waf-backend:ci backend
+      - name: Import the app as the image user on a read-only root filesystem (as on Fargate)
+        run: docker run --rm --read-only sas-waf-backend:ci python -c "import app.main"
