@@ -28,6 +28,8 @@ include = ["common*", "account_collector*", "fetch_accounts*", "mark_account_deg
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# pytest-asyncio comes in with the backend in CI; no lambda test is async, but an unset scope warns on every run.
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
