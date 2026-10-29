@@ -30,6 +30,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # pytest-asyncio comes in with the backend in CI; no lambda test is async, but an unset scope warns on every run.
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error"]  # a new deprecation fails the run instead of scrolling past
 
 [tool.ruff]
 line-length = 120

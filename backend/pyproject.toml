@@ -36,6 +36,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+filterwarnings = ["error"]  # a new deprecation fails the run instead of scrolling past
 
 [tool.ruff]
 line-length = 120
