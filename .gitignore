@@ -2,6 +2,8 @@
 .venv/
 __pycache__/
 *.egg-info/
+# setuptools output of a non-editable `pip install .` (backend/build/, lambdas/build/)
+build/
 .pytest_cache/
 .ruff_cache/
 
