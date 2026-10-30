@@ -79,3 +79,24 @@ jobs:
         run: docker build -t sas-waf-backend:ci backend
       - name: Import the app as the image user on a read-only root filesystem (as on Fargate)
         run: docker run --rm --read-only sas-waf-backend:ci python -c "import app.main"
+
+  lambda-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the Lambda zips
+        working-directory: lambdas
+        run: python build.py
+      - name: Import each handler from its own zip (boto3 stands in for the Lambda runtime)
+        working-directory: lambdas
+        run: |
+          python -m pip install --quiet --target "$RUNNER_TEMP/runtime" boto3
+          for zip in dist/*.zip; do
+            fn=$(basename "$zip" .zip)
+            python -m zipfile -e "$zip" "$RUNNER_TEMP/$fn"
+            python -S -c "import sys, importlib; sys.path[:0] = ['$RUNNER_TEMP/$fn', '$RUNNER_TEMP/runtime']; assert callable(importlib.import_module('$fn.handler').lambda_handler)"
+            echo "$fn: ok"
+          done
