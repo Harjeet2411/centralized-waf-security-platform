@@ -291,6 +291,12 @@ Migration 0001 is hand-written SQL (CHECKs, trigger, partial/GiST/GIN indexes). 
 docker build -t sas-waf-backend:local backend      # API by default; TTL worker / alembic via command override
 ```
 
+### CI (`.github/workflows/ci.yml`, every push to `main` and every PR)
+- `python`: Postgres 16 + Redis 7 services, then ruff and pytest for `backend/` and `lambdas/`, plus cfn-lint on `infra/`. Both pytest configs set `filterwarnings = ["error"]`, so a new deprecation fails the run.
+- `frontend`: `npm ci` and `npm run build` (`tsc -b` with `noUnusedLocals`/`noUnusedParameters`, then Vite).
+- `backend-image`: builds `backend/Dockerfile` and imports `app.main` as the image user with `--read-only`, as the Fargate task runs.
+- `lambda-packages`: `python build.py`, then imports each `<function>.handler` from its own zip with site-packages off.
+
 ### Auth in local dev
 Login is OIDC-only (`/api/v1/auth/login` → IdP fronting IAM Identity Center → `/api/v1/auth/callback`); users must be pre-provisioned by `sso_subject_id` — first admin via `python -m app.cli create-admin`, everyone else via `/api/v1/governance/users` (`app/services/registry_service.py`). Privilege changes revoke the user's sessions through the `session:index:{user_id}` set. Tests create sessions directly in Redis (`tests/conftest.py::login_as`).
 
