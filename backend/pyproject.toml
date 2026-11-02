@@ -44,7 +44,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
-ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependencies in defaults are idiomatic; any other call in a default is still flagged.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "app.security.require"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106"]
