@@ -198,7 +198,7 @@ def web_acl_resources(wafv2, snapshot: WebAclSnapshot, errors: CollectionErrors)
     for resource_type in ("APPLICATION_LOAD_BALANCER", "API_GATEWAY"):
         try:
             arns = wafv2.list_resources_for_web_acl(WebACLArn=snapshot.arn, ResourceType=resource_type)
-            mapping.update({arn: snapshot.arn for arn in arns.get("ResourceArns", [])})
+            mapping.update(dict.fromkeys(arns.get("ResourceArns", []), snapshot.arn))
         except ClientError as exc:
             errors.record("waf_coverage", f"{snapshot.name}/{resource_type}", exc)
     return mapping

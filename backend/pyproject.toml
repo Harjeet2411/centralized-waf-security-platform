@@ -43,7 +43,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+select = ["E", "F", "I", "B", "C4", "UP", "S", "ASYNC"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI dependencies in defaults are idiomatic; any other call in a default is still flagged.

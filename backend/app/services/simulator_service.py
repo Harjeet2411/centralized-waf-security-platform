@@ -136,7 +136,7 @@ async def simulate(db: AsyncSession, req: SimulationRequest, actor: str,
         "false_positive_samples": samples, "window_hours": req.window_hours,
     }
     sim = Simulation(
-        title=req.title, proposed_action=p.type, target_webacl_ids=[w for w in row["webacls"]],
+        title=req.title, proposed_action=p.type, target_webacl_ids=list(row["webacls"]),
         target_accounts=list(row["accounts"]), target_apps=[], proposed_statement=json.loads(p.model_dump_json()),
         evaluated_requests=row["evaluated"], would_block=would_block, would_allow=would_allow,
         potential_false_positives=fp, fp_rate_percent=result["fp_rate_percent"],

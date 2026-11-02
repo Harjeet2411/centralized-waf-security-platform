@@ -335,7 +335,7 @@ def test_update_web_acl_and_ip_set_params_match_wafv2_model():
     wafv2 = boto3.client("wafv2", region_name="eu-west-1", aws_access_key_id="x", aws_secret_access_key="x")
     executor = WafExecutor(lambda service, region: wafv2, wait_seconds=0)
     ref = {"name": "prod-payments-waf", "id": "r-1", "scope": "REGIONAL", "region": "eu-west-1", "arn": WEBACL_ARN}
-    acl = {k: v for k, v in BASE_ACL.items()}
+    acl = dict(BASE_ACL)
     after = json.loads(json.dumps(acl))
     after["Rules"][2]["Action"] = {"Block": {}}
     with Stubber(wafv2) as stub:
