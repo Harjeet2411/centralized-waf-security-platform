@@ -37,7 +37,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "C4", "UP", "S"]
+select = ["E", "F", "I", "B", "C4", "UP", "S", "PT011"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S108"]

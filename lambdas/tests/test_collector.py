@@ -135,7 +135,7 @@ def test_version_status_rules():
 def test_fetch_accounts_emits_map_items(account):
     out = fetch_accounts({"mode": "full"}, None)
     assert out == {"mode": "full", "accounts": [account]}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown sync mode 'everything'"):
         fetch_accounts({"mode": "everything"}, None)
 
 

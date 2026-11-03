@@ -36,7 +36,7 @@ def test_account_scope():
     assert rbac_service.account_scope(owner, "VIEW", ["111111111111"]) is None
     with pytest.raises(PermissionError):
         rbac_service.account_scope(owner, "APPROVE", [])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown permission 'DELETE_EVERYTHING'"):
         rbac_service.has_permission(owner, "DELETE_EVERYTHING")
 
 
