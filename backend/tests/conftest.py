@@ -52,7 +52,6 @@ def migrated_database():
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")
-    yield
 
 
 @pytest.fixture(autouse=True)

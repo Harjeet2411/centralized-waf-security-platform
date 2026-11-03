@@ -26,7 +26,7 @@ def test_discovery_role_is_read_only():
     for statement in _policy_statements("SASWafDiscoveryRole"):
         assert statement["Effect"] == "Allow"
         for action in _actions(statement):
-            service, name = action.split(":")
+            _service, name = action.split(":")
             assert name.startswith(READ_PREFIXES) or action == "apigateway:GET", action
 
 
