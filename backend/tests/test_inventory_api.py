@@ -120,6 +120,25 @@ async def test_campaign_detail(client, seeded):
     assert body["campaign"]["ip_count"] == 2 and body["correlation_evidence"] == [{"type": "shared_ja4"}]
 
 
+@pytest.mark.parametrize(("path", "message"), [
+    ("/api/v1/entities?type=ipv4", "Unknown type 'ipv4'"),
+    ("/api/v1/entities?risk_level=severe", "Unknown risk_level 'severe'"),
+    ("/api/v1/campaigns?status=open", "Unknown status 'open'"),
+])
+async def test_unknown_filter_values_are_rejected(client, seeded, path, message):
+    client.cookies.update(await login_as("Security Analyst"))
+    resp = await client.get(path)
+    assert resp.status_code == 422
+    assert message in resp.json()["detail"]
+
+
+async def test_filters_are_case_insensitive(client, seeded):
+    client.cookies.update(await login_as("Security Analyst"))
+    campaigns = (await client.get("/api/v1/campaigns?status=active")).json()
+    assert [cp["campaign_code"] for cp in campaigns] == ["CMP-2026-089"]
+    assert (await client.get("/api/v1/entities", params={"risk_level": "high"})).json()["total"] >= 1
+
+
 async def test_bootstrap_posture_from_scored_accounts(client, seeded):
     client.cookies.update(await login_as("Executive"))
     posture = {p["key"]: p for p in (await client.get("/api/v1/bootstrap")).json()["posture_dimensions"]}

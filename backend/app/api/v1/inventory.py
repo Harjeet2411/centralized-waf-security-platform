@@ -86,6 +86,20 @@ async def list_endpoints(
     ]
 
 
+# Allowed values from the CHECK constraints in alembic 0001. An unknown filter value is a 422, not an empty page.
+ENTITY_TYPES = ("IP", "ASN", "COUNTRY", "ORG", "JA3", "JA4", "USER_AGENT", "URI_PATTERN")
+RISK_LEVELS = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
+CAMPAIGN_STATUSES = ("ACTIVE", "INVESTIGATING", "MITIGATED", "RESOLVED")
+
+
+def _choice(name: str, value: str, allowed: tuple[str, ...]) -> str:
+    wanted = value.upper()
+    if wanted not in allowed:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            f"Unknown {name} {value!r}; expected one of {', '.join(allowed).lower()}")
+    return wanted
+
+
 @router.get("/entities", response_model=c.Page)
 async def list_entities(
     type: str | None = Query(None, description="IP | ASN | JA3 | JA4 | USER_AGENT"),  # noqa: A002
@@ -95,9 +109,9 @@ async def list_entities(
 ):
     query = select(Entity)
     if type:
-        query = query.where(Entity.type == type.upper())
+        query = query.where(Entity.type == _choice("type", type, ENTITY_TYPES))
     if risk_level:
-        query = query.where(Entity.risk_level == risk_level.upper())
+        query = query.where(Entity.risk_level == _choice("risk_level", risk_level, RISK_LEVELS))
     if q:
         like = f"%{q.replace('%', r'\%').replace('_', r'\_')}%"
         query = query.where(Entity.value.ilike(like) | Entity.organization.ilike(like) | Entity.asn.ilike(like))
@@ -213,7 +227,7 @@ async def list_campaigns(
 ):
     query = select(Campaign).order_by(Campaign.last_active.desc()).limit(500)
     if status_filter:
-        query = query.where(Campaign.status == status_filter.upper())
+        query = query.where(Campaign.status == _choice("status", status_filter, CAMPAIGN_STATUSES))
     return await campaigns_out(db, (await db.scalars(query)).all())
 
 
