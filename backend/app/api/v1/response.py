@@ -80,12 +80,22 @@ async def create_approval(req: approval_service.ApprovalRequest,
     return await _detail(db, approval)
 
 
+# The approvals.status CHECK constraint (alembic 0001)
+APPROVAL_STATUSES = ("PENDING", "APPROVED", "REJECTED", "EXECUTED", "VERIFIED", "ROLLED_BACK", "EXPIRED")
+
+
 @router.get("/approvals", response_model=list[c.ApprovalOut])
 async def list_approvals(status_filter: str | None = Query(None, alias="status"),
                          _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db)):
     query = select(Approval).order_by(Approval.requested_at.desc()).limit(500)
     if status_filter:
-        query = query.where(Approval.status == status_filter.upper())
+        wanted = status_filter.upper()
+        if wanted not in APPROVAL_STATUSES:
+            # A typo used to return an empty list, which looks like "nothing pending"
+            expected = ", ".join(APPROVAL_STATUSES).lower()
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                f"Unknown status {status_filter!r}; expected one of {expected}")
+        query = query.where(Approval.status == wanted)
     return [approval_service.approval_out(a) for a in (await db.scalars(query)).all()]
 
 

@@ -308,6 +308,15 @@ async def test_reject_records_decision(client, world, waf, db):
     assert (await audit_actions(db))[-1] == "APPROVAL_REJECTED"
 
 
+async def test_approvals_status_filter(client, world, waf):
+    approval_id = (await request_block(client, world)).json()["approval"]["id"]
+    assert [a["id"] for a in (await client.get("/api/v1/approvals?status=pending")).json()] == [approval_id]
+    assert (await client.get("/api/v1/approvals?status=rejected")).json() == []
+    resp = await client.get("/api/v1/approvals?status=pendng")
+    assert resp.status_code == 422
+    assert "Unknown status 'pendng'" in resp.json()["detail"]
+
+
 async def test_allow_list_management_and_audit_export(client, world, db):
     await as_role(client, "Security Analyst")
     added = await client.post("/api/v1/allow-list", json={
