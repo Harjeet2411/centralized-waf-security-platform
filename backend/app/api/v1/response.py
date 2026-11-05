@@ -217,6 +217,14 @@ async def deactivate_allow_list(entry_id: uuid.UUID, body: RollbackRequest,
 AUDIT_FIELDS = ["audit_code", "timestamp", "user_email", "user_role", "account_id", "region", "action",
                 "target_resource", "previous_state", "new_state", "reason", "risk_level", "approver", "approval_id",
                 "execution_status", "aws_request_id", "verification_status", "rollback_available"]
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Prefix text that a spreadsheet would run as a formula (CSV injection) with a quote."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
 
 
 @router.get("/governance/audit")
@@ -245,6 +253,6 @@ async def audit_trail(
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=AUDIT_FIELDS)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
     return Response(buffer.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=sas-waf-audit.csv"})

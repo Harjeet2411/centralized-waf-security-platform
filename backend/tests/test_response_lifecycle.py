@@ -1,6 +1,8 @@
 """12-step controlled response lifecycle end-to-end: request -> guardrails -> tiered approval -> execute -> verify ->
 audit -> rollback / TTL expiry, against a stateful fake WAFv2 (and botocore Stubber for real request shapes)."""
 
+import csv
+import io
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -336,6 +338,18 @@ async def test_allow_list_management_and_audit_export(client, world, db):
     assert lines[0].startswith("audit_code,timestamp,user_email") and len(lines) == 3
     actions = [r["action"] for r in (await client.get("/api/v1/governance/audit")).json()]
     assert actions == ["ALLOW_LIST_DEACTIVATE", "ALLOW_LIST_ADD"]
+
+
+async def test_audit_csv_neutralises_formulas(client, world, db):
+    await as_role(client, "Security Analyst")
+    await client.post("/api/v1/allow-list", json={
+        "cidr_or_value": "198.51.100.0/24", "name": "Partner", "category": "PAYMENT_GATEWAY", "owner": "payments",
+        "reason": "=HYPERLINK(\"http://evil.example\")"})
+    await as_role(client, "Auditor")
+    rows = list(csv.DictReader(io.StringIO(
+        (await client.get("/api/v1/governance/audit", params={"format": "csv"})).text)))
+    assert rows[0]["reason"] == "'=HYPERLINK(\"http://evil.example\")"
+    assert (await client.get("/api/v1/governance/audit")).json()[0]["reason"].startswith("=HYPERLINK")
 
 
 async def test_audit_export_rejects_reversed_range(client):
