@@ -338,6 +338,14 @@ async def test_allow_list_management_and_audit_export(client, world, db):
     assert actions == ["ALLOW_LIST_DEACTIVATE", "ALLOW_LIST_ADD"]
 
 
+async def test_audit_export_rejects_reversed_range(client):
+    await as_role(client, "Auditor")
+    resp = await client.get("/api/v1/governance/audit",
+                            params={"from": "2026-11-05T00:00:00Z", "to": "2026-11-01T00:00:00Z"})
+    assert resp.status_code == 422
+    assert "'from' must not be later than 'to'" in resp.json()["detail"]
+
+
 # --- real request shapes (botocore service model validation) -------------------------------------------------
 
 def test_update_web_acl_and_ip_set_params_match_wafv2_model():

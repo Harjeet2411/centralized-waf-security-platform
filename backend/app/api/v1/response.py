@@ -227,6 +227,8 @@ async def audit_trail(
     limit: int = Query(1000, ge=1, le=10_000), _: Principal = Depends(require("VIEW")),
     db: AsyncSession = Depends(get_db),
 ):
+    if start and end and start > end:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "'from' must not be later than 'to'")
     query = select(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(limit)
     if start:
         query = query.where(AuditEvent.timestamp >= start)
