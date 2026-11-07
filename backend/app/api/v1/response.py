@@ -181,7 +181,10 @@ async def add_allow_list(body: AllowListCreate, principal: Principal = Depends(r
             network = str(ipaddress.ip_network(body.cidr_or_value.strip(), strict=False))
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid CIDR") from exc
-    entry = AllowListEntry(cidr_or_value=network or body.cidr_or_value.strip(), ip_network=network,
+    value = network or body.cidr_or_value.strip()
+    if await db.scalar(select(AllowListEntry).where(AllowListEntry.cidr_or_value == value)):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{value} is already on the allow-list")
+    entry = AllowListEntry(cidr_or_value=value, ip_network=network,
                            entity_type=body.entity_type, name=body.name, category=body.category, owner=body.owner,
                            reason=body.reason, created_by=principal.email)
     db.add(entry)

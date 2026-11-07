@@ -326,6 +326,10 @@ async def test_allow_list_management_and_audit_export(client, world, db):
         "reason": "Card processor callbacks"})
     assert added.status_code == 201
     entry_id = added.json()["id"]
+    duplicate = await client.post("/api/v1/allow-list", json={
+        "cidr_or_value": "203.0.113.7/24", "name": "PSP egress again", "category": "PAYMENT_GATEWAY",
+        "owner": "payments", "reason": "Card processor callbacks"})
+    assert duplicate.status_code == 409 and duplicate.json()["detail"] == "203.0.113.0/24 is already on the allow-list"
     deactivate = f"/api/v1/allow-list/{entry_id}/deactivate"
     assert (await client.post(deactivate, json={"reason": "contract ended"})).status_code == 403
     await as_role(client, "Security Admin")
