@@ -330,6 +330,8 @@ async def test_allow_list_management_and_audit_export(client, world, db):
     assert (await client.post(deactivate, json={"reason": "contract ended"})).status_code == 403
     await as_role(client, "Security Admin")
     assert (await client.post(deactivate, json={"reason": "contract ended"})).json()["is_active"] is False
+    again = await client.post(deactivate, json={"reason": "contract ended"})
+    assert again.status_code == 409 and again.json()["detail"] == "Allow-list entry is already inactive"
 
     await as_role(client, "Auditor")
     csv_resp = await client.get("/api/v1/governance/audit", params={"format": "csv"})

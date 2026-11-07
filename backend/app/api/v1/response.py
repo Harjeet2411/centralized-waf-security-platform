@@ -203,6 +203,9 @@ async def deactivate_allow_list(entry_id: uuid.UUID, body: RollbackRequest,
     entry = await db.get(AllowListEntry, entry_id)
     if entry is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Allow-list entry not found")
+    if not entry.is_active:
+        # A second deactivation would audit a False -> False change as True -> False
+        raise HTTPException(status.HTTP_409_CONFLICT, "Allow-list entry is already inactive")
     entry.is_active = False
     audit_service.record(db, actor_email=principal.email, actor_role=principal.role, account_id="GLOBAL",
                          region="global", action="ALLOW_LIST_DEACTIVATE", target_resource=entry.cidr_or_value,
