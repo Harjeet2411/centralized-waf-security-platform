@@ -131,6 +131,11 @@ async def test_temp_block_full_lifecycle_then_rollback(client, world, waf, db):
     assert (await audit_actions(db))[-1] == "ROLLBACK"
     assert [ch["id"] for ch in (await client.get("/api/v1/changes?status=rolled_back")).json()] == [change["id"]]
     assert (await client.get("/api/v1/changes?status=executed")).json() == []
+    by_account = (await client.get("/api/v1/changes", params={"account_id": change["account_id"], "limit": 1})).json()
+    assert [ch["id"] for ch in by_account] == [change["id"]]
+    assert (await client.get("/api/v1/changes", params={"account_id": "999999999999"})).json() == []
+    assert (await client.get("/api/v1/changes", params={"account_id": "prod"})).status_code == 422
+    assert (await client.get("/api/v1/changes", params={"limit": 0})).status_code == 422
     bad = await client.get("/api/v1/changes?status=rolledback")
     assert bad.status_code == 422 and "expected one of executed, rolled_back" in bad.json()["detail"]
     status = await db.scalar(text("SELECT status FROM approvals WHERE id = :i"), {"i": approval_id})

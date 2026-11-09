@@ -130,8 +130,12 @@ CHANGE_STATUSES = ("EXECUTED", "ROLLED_BACK")
 
 @router.get("/changes")
 async def list_changes(status_filter: str | None = Query(None, alias="status"),
+                       account_id: str | None = Query(None, pattern=r"^\d{12}$"),
+                       limit: int = Query(500, ge=1, le=5000),
                        _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db)):
-    query = select(Change).order_by(Change.executed_at.desc()).limit(500)
+    query = select(Change).order_by(Change.executed_at.desc()).limit(limit)
+    if account_id:
+        query = query.where(Change.account_id == account_id)
     if status_filter:
         wanted = status_filter.strip().upper()
         if wanted not in CHANGE_STATUSES:
