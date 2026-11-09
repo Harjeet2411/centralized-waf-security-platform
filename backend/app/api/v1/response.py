@@ -125,10 +125,21 @@ async def decide(approval_id: uuid.UUID, body: Decision, principal: Principal = 
 
 # --- changes / rollback -----------------------------------------------------------------------------------
 
+CHANGE_STATUSES = ("EXECUTED", "ROLLED_BACK")
+
+
 @router.get("/changes")
-async def list_changes(_: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db)):
-    return [_change(ch) for ch in (await db.scalars(select(Change).order_by(Change.executed_at.desc())
-                                                    .limit(500))).all()]
+async def list_changes(status_filter: str | None = Query(None, alias="status"),
+                       _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db)):
+    query = select(Change).order_by(Change.executed_at.desc()).limit(500)
+    if status_filter:
+        wanted = status_filter.strip().upper()
+        if wanted not in CHANGE_STATUSES:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                f"Unknown status {status_filter!r}; expected one of "
+                                f"{', '.join(CHANGE_STATUSES).lower()}")
+        query = query.where(Change.execution_status == wanted)
+    return [_change(ch) for ch in (await db.scalars(query)).all()]
 
 
 @router.get("/response/active-blocks")
