@@ -31,6 +31,10 @@ class Actor(BaseModel):
     role: str
 
 
+def _unique(regions: list[str]) -> list[str]:
+    return list(dict.fromkeys(regions))  # keep the order, drop repeats
+
+
 class AccountCreate(BaseModel):
     account_id: str = Field(pattern=ACCOUNT_ID)
     name: str = Field(min_length=2, max_length=128)
@@ -45,6 +49,7 @@ class AccountCreate(BaseModel):
         for region in self.regions:
             if not re.match(REGION, region):
                 raise ValueError(f"invalid region {region!r}")
+        self.regions = _unique(self.regions)
         self.discovery_role_arn = self.discovery_role_arn or f"arn:aws:iam::{self.account_id}:role/SASWafDiscoveryRole"
         self.response_role_arn = self.response_role_arn or f"arn:aws:iam::{self.account_id}:role/SASWafResponseRole"
         for arn in (self.discovery_role_arn, self.response_role_arn):
@@ -65,6 +70,8 @@ class AccountUpdate(BaseModel):
         for region in self.regions or []:
             if not re.match(REGION, region):
                 raise ValueError(f"invalid region {region!r}")
+        if self.regions is not None:
+            self.regions = _unique(self.regions)
         return self
 
 

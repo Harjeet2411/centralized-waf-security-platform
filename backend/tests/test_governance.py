@@ -63,6 +63,16 @@ async def test_account_validation(client, patch):
     assert (await client.post("/api/v1/governance/accounts", json={**ACCOUNT, **patch})).status_code == 422
 
 
+async def test_duplicate_regions_are_dropped(client):
+    await admin(client)
+    body = {**ACCOUNT, "regions": ["eu-west-1", "us-east-1", "eu-west-1"]}
+    created = await client.post("/api/v1/governance/accounts", json=body)
+    assert created.json()["regions"] == ["eu-west-1", "us-east-1"]
+    patched = await client.patch(f"/api/v1/governance/accounts/{ACCT}",
+                                 json={"regions": ["us-east-1", "us-east-1", "ap-south-1"]})
+    assert patched.json()["regions"] == ["us-east-1", "ap-south-1"]
+
+
 async def test_user_provisioning_validation(client):
     await admin(client)
     base = {"email": "bob@sas.test", "full_name": "Bob", "sso_subject_id": "sub-bob"}
