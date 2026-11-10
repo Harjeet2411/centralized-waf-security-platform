@@ -45,6 +45,11 @@ async def test_register_account_derives_stackset_roles_and_audits(client, db):
     patched = await client.patch(f"/api/v1/governance/accounts/{ACCT}", json={"owner": "payments-platform"})
     assert patched.json()["owner"] == "payments-platform"
     assert await audit_actions(db) == ["ACCOUNT_REGISTERED", "ACCOUNT_UPDATED"]
+    # Sending the same value again, or nothing, changes nothing and is not audited
+    for body in ({"owner": "payments-platform"}, {}):
+        again = await client.patch(f"/api/v1/governance/accounts/{ACCT}", json=body)
+        assert again.status_code == 200 and again.json()["owner"] == "payments-platform"
+    assert await audit_actions(db) == ["ACCOUNT_REGISTERED", "ACCOUNT_UPDATED"]
 
 
 @pytest.mark.parametrize("patch", [

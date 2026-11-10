@@ -119,7 +119,10 @@ async def update_account(db: AsyncSession, account_id: str, body: AccountUpdate,
     account = await db.scalar(select(Account).where(Account.account_id == account_id))
     if account is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
-    changes = body.model_dump(exclude_none=True)
+    # Only fields that really differ: an empty or repeated PATCH must not add an ACCOUNT_UPDATED audit event
+    changes = {k: v for k, v in body.model_dump(exclude_none=True).items() if getattr(account, k) != v}
+    if not changes:
+        return account
     previous = {k: getattr(account, k) for k in changes}
     for key, value in changes.items():
         setattr(account, key, value)
