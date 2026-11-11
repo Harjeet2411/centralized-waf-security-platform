@@ -410,3 +410,11 @@ def test_update_web_acl_and_ip_set_params_match_wafv2_model():
                           {"Name": "sas-platform-blocklist", "Scope": "REGIONAL", "Id": "ips-1"})
         assert executor.execute({"op": "ip_set_add", "ip_set": ip_ref, "add": [ATTACKER]}).verified
         stub.assert_no_pending_responses()
+
+
+async def test_approvals_limit_is_validated(client, world, waf):
+    created = await request_block(client, world)
+    assert created.status_code == 201, created.text
+    assert len((await client.get("/api/v1/approvals", params={"limit": 1})).json()) == 1
+    for bad in (0, 501):
+        assert (await client.get("/api/v1/approvals", params={"limit": bad})).status_code == 422

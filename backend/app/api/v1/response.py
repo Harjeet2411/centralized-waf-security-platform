@@ -86,8 +86,9 @@ APPROVAL_STATUSES = ("PENDING", "APPROVED", "REJECTED", "EXECUTED", "VERIFIED", 
 
 @router.get("/approvals", response_model=list[c.ApprovalOut])
 async def list_approvals(status_filter: str | None = Query(None, alias="status"),
+                         limit: int = Query(500, ge=1, le=500),
                          _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db)):
-    query = select(Approval).order_by(Approval.requested_at.desc()).limit(500)
+    query = select(Approval).order_by(Approval.requested_at.desc()).limit(limit)
     if status_filter:
         wanted = status_filter.upper()
         if wanted not in APPROVAL_STATUSES:
