@@ -222,10 +222,10 @@ async def entity_detail(
 
 @router.get("/campaigns", response_model=list[c.CampaignOut])
 async def list_campaigns(
-    status_filter: str | None = Query(None, alias="status"), _: Principal = Depends(require("VIEW")),
-    db: AsyncSession = Depends(get_db),
+    status_filter: str | None = Query(None, alias="status"), limit: int = Query(500, ge=1, le=500),
+    _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db),
 ):
-    query = select(Campaign).order_by(Campaign.last_active.desc()).limit(500)
+    query = select(Campaign).order_by(Campaign.last_active.desc()).limit(limit)
     if status_filter:
         query = query.where(Campaign.status == _choice("status", status_filter, CAMPAIGN_STATUSES))
     return await campaigns_out(db, (await db.scalars(query)).all())

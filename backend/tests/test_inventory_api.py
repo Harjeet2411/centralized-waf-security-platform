@@ -145,3 +145,10 @@ async def test_bootstrap_posture_from_scored_accounts(client, seeded):
     assert posture["waf_coverage"]["value"] == 50.0  # 1 of 2 internet-facing endpoints attached
     assert posture["config_hygiene"]["value"] == 80.0 and posture["overall"]["value"] == 72.5
     assert posture["waf_coverage"]["evidence_count"] == 2
+
+
+async def test_campaign_limit_is_validated(client, seeded):
+    client.cookies.update(await login_as("Security Analyst"))
+    assert len((await client.get("/api/v1/campaigns", params={"limit": 1})).json()) == 1
+    for bad in (0, 501):
+        assert (await client.get("/api/v1/campaigns", params={"limit": bad})).status_code == 422
