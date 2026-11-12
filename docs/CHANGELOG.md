@@ -5,6 +5,14 @@ All notable architectural, schema, and application changes to the SAS Threat Int
 
 ---
 
+## [Unreleased] - API Input Validation
+### Changed
+- List endpoints reject unknown filter values with `422` instead of returning an empty list: `/approvals?status=`, `/campaigns?status=`, `/entities?type=` and `risk_level=`, `/changes?status=` (`executed` or `rolled_back`). Filters are case-insensitive.
+- `/changes` also takes `?account_id=` (12 digits) and `?limit=` (1-5000, default 500); `/approvals` and `/campaigns` take `?limit=` (1-500, default 500).
+- Audit export: a `from` later than `to` returns `422`, and CSV cells that start with `=`, `+`, `-` or `@` are quoted so spreadsheets do not run them as formulas.
+- Allow list: adding a value that is already listed, or deactivating an entry that is already inactive, returns `409`.
+- Accounts: a `PATCH` that changes nothing is not audited, and repeated regions are dropped on register and update.
+
 ## [Unreleased] - Real AWS Organization Setup (demo removed)
 ### Changed
 - `README.md` is now a step-by-step guide to deploy the platform into an AWS Organization: OIDC sign-in, certificates, Lambda build, platform stack, cross-account StackSet roles (pilot OU first), backend image, application stack, schema + first admin, console publish, account registration, controlled-response prerequisites, full-log replication, organization rollout, updates and troubleshooting.
