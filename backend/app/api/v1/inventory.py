@@ -102,7 +102,7 @@ def _choice(name: str, value: str, allowed: tuple[str, ...]) -> str:
 
 @router.get("/entities", response_model=c.Page)
 async def list_entities(
-    type: str | None = Query(None, description="IP | ASN | JA3 | JA4 | USER_AGENT"),  # noqa: A002
+    type: str | None = Query(None, description=" | ".join(ENTITY_TYPES)),  # noqa: A002
     risk_level: str | None = None, q: str | None = Query(None, max_length=200),
     limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
     _: Principal = Depends(require("VIEW")), db: AsyncSession = Depends(get_db),
