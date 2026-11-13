@@ -116,3 +116,13 @@ async def test_failed_start_releases_the_lock(client, db, sfn, monkeypatch):
     with pytest.raises(RuntimeError, match="states unavailable"):
         await client.post("/api/v1/refresh")
     assert not await redis_client.exists(sync.LOCK_KEY)  # the next click can try again
+
+
+async def test_watcher_gives_up_on_a_stuck_execution(monkeypatch):
+    monkeypatch.setattr(sync, "STALE_SYNC", timedelta(seconds=0.05))
+    await redis_client.set(sync.LOCK_KEY, "x")
+    outcome = await sync.watch_execution(FakeSfn(statuses=("RUNNING",)), redis_client, "arn:exec:stuck",
+                                         poll_seconds=0.01)
+    assert outcome == "TIMED_OUT"
+    assert not await redis_client.exists(sync.LOCK_KEY)  # a stuck run must not block every later refresh
+    assert json.loads(await redis_client.get(sync.STATUS_KEY))["status"] == "TIMED_OUT"
