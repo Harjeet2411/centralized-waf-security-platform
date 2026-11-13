@@ -88,3 +88,31 @@ async def test_watcher_broadcasts_completion():
     assert not await redis_client.exists("sync:global:lock")
     assert json.loads(await redis_client.get("sync:global:status"))["status"] == "SUCCEEDED"
     await pubsub.aclose()
+
+
+async def test_stale_syncing_status_does_not_block_a_new_sync(client, db, sfn):
+    await seed_account(db, datetime.now(UTC) - timedelta(hours=3))
+    await redis_client.delete(sync.LOCK_KEY)
+    crashed = {"status": "syncing", "execution_arn": "arn:old", "requested_by": "x",
+               "started_at": (datetime.now(UTC) - sync.STALE_SYNC - timedelta(minutes=1)).isoformat()}
+    await redis_client.set(sync.STATUS_KEY, json.dumps(crashed))
+    client.cookies.update(await login_as("SOC Analyst"))
+    resp = await client.post("/api/v1/refresh")
+    assert resp.status_code == 202 and resp.json()["execution_arn"] != "arn:old"
+    assert len(sfn.started) == 1
+    for task in list(sync._watchers):  # noqa: SLF001
+        task.cancel()
+
+
+async def test_failed_start_releases_the_lock(client, db, sfn, monkeypatch):
+    await seed_account(db, datetime.now(UTC) - timedelta(hours=3))
+    await redis_client.delete(sync.LOCK_KEY, sync.STATUS_KEY)
+
+    def boom(**_):
+        raise RuntimeError("states unavailable")
+
+    monkeypatch.setattr(sfn, "start_execution", boom)
+    client.cookies.update(await login_as("SOC Analyst"))
+    with pytest.raises(RuntimeError, match="states unavailable"):
+        await client.post("/api/v1/refresh")
+    assert not await redis_client.exists(sync.LOCK_KEY)  # the next click can try again
