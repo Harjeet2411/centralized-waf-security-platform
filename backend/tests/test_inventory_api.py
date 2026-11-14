@@ -124,6 +124,7 @@ async def test_campaign_detail(client, seeded):
     ("/api/v1/entities?type=ipv4", "Unknown type 'ipv4'"),
     ("/api/v1/entities?risk_level=severe", "Unknown risk_level 'severe'"),
     ("/api/v1/campaigns?status=open", "Unknown status 'open'"),
+    ("/api/v1/endpoints?waf_status=safe", "Unknown waf_status 'safe'"),
 ])
 async def test_unknown_filter_values_are_rejected(client, seeded, path, message):
     client.cookies.update(await login_as("Security Analyst"))

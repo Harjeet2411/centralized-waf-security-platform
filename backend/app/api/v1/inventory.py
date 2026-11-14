@@ -71,7 +71,7 @@ async def list_endpoints(
     if account_id:
         query = query.where(Endpoint.account_id == account_id)
     if waf_status:
-        query = query.where(Endpoint.waf_status == waf_status.upper())
+        query = query.where(Endpoint.waf_status == _choice("waf_status", waf_status, ENDPOINT_WAF_STATUSES))
     if internet_facing is not None:
         query = query.where(Endpoint.internet_facing == internet_facing)
     return [
@@ -90,6 +90,7 @@ async def list_endpoints(
 ENTITY_TYPES = ("IP", "ASN", "COUNTRY", "ORG", "JA3", "JA4", "USER_AGENT", "URI_PATTERN")
 RISK_LEVELS = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
 CAMPAIGN_STATUSES = ("ACTIVE", "INVESTIGATING", "MITIGATED", "RESOLVED")
+ENDPOINT_WAF_STATUSES = ("PROTECTED", "PARTIALLY_PROTECTED", "UNPROTECTED", "UNKNOWN")
 
 
 def _choice(name: str, value: str, allowed: tuple[str, ...]) -> str:
